@@ -10,6 +10,7 @@ Parameters:
     7. Return the response is a data structure that can be printed.
     8. Exit
 """
+# Todo: Set connection timeout!
 
 import socket
 import pickle
@@ -25,11 +26,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.connect((HOST, PORT))
     except OSError as msg:
         print('Could Not Connect To Host!')
-        sys.exit(1)  # exit the server with error
+        sys.exit(1)  # Exit the server with error
 
     # Send the JOIN message and receive the response in a variable
     sock.sendall(pickle.dumps('JOIN'))
-    data = pickle.load(sock.recv(1024))
+    data = pickle.load(sock.recv(1024))  # De-serialize the response
 
     # If we receive data (not null), start talking to each member
     if data is not None:
@@ -47,7 +48,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
 
                 # Send the HELLO message to the member, record the response, and print it
                 mem.send(pickle.dumps('HELLO'))
-                res = pickle.load(mem.recv(1024))
+                res = pickle.load(mem.recv(1024))  # De-serialize the response
                 print('OK', repr(res))
         # exit the server successfully
         sys.exit(0)
