@@ -23,7 +23,7 @@ failedMsg = 'Failed to connect: '
 def simpleClient():
     # Set up connection with the server using a socket named sock
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        print('Contacting Server...')
+        print('Contacting Server...\n')
         # First try the connect, if failed, we display the message and exit
         try:
             sock.settimeout(timeout)
@@ -41,7 +41,7 @@ def simpleClient():
 
         # If we receive data (not null), start talking to each member
         if data is not None:
-            print(f'Connected with data!')
+            print(f'Connected with data!\n')
             # Loop through the data dict to send a message to each member of the group. Need to create a new socket connection
             # which is named mem (member)
             for d in data:
@@ -60,12 +60,12 @@ def simpleClient():
                     # Send the HELLO message to the member, record the response, and print it
                     mem.send(pickle.dumps('HELLO'))
                     res = pickle.loads(mem.recv(BUF_SZ))  # De-serialize the response
-                    print('Success: ', repr(res))
+                    print(repr(res))
             # exit the server successfully
             sys.exit(0)
         # If the data received is null/none, we want to exit the server with an error message
         else:
-            print('Error: No data received')
+            print('Error: No data received\n')
             # exit the server with error
             sys.exit(1)
 
