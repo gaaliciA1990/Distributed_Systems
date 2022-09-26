@@ -10,50 +10,68 @@ Parameters:
     7. Return the response is a data structure that can be printed.
     8. Exit
 """
-# Todo: Set connection timeout!
 
 import socket
 import pickle
 import sys
 
-HOST = "cs2.seattleu.edu"
+HOST = "localhost"
 PORT = 23600
+timeout = float(1.500)
+BUF_SZ = 1024
 
-# Set up connection with the server using a socket named sock
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    # First try the connect, if failed, we display the message and exit
-    try:
-        sock.connect((HOST, PORT))
-    except OSError as msg:
-        print('Could Not Connect To Host!')
-        sys.exit(1)  # Exit the server with error
 
-    # Send the JOIN message and receive the response in a variable
-    sock.sendall(pickle.dumps('JOIN'))
-    data = pickle.load(sock.recv(1024))  # De-serialize the response
+def client():
+    # Set up connection with the server using a socket named sock
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        # First try the connect, if failed, we display the message and exit
+        try:
+            sock.settimeout(timeout)
+            sock.connect((HOST, PORT))
+        except socket.timeout as to:
+            print(to)
+            sys.exit(1)  # Exit the server with error
+        except OSError as err:
+            print(err)
+            sys.exit(1)  # Exit the server with error
 
-    # If we receive data (not null), start talking to each member
-    if data is not None:
-        print(f'Connected!')
-        # Loop through the data dict to send a message to each member of the group. Need to create a new socket connection
-        # which is named mem (member)
-        for d in data:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as mem:
-                # Try to make the connect to the host, if an error occurs, print message and continue to next member
-                try:
-                    mem.connect(d.host, d.port)
-                except OSError as msg:
-                    print('Failed to connect to host: ', repr(d.host))
-                    continue
+        # Send the JOIN message and receive the response in a variable
+        sock.sendall(pickle.dumps('JOIN'))
+        data = sock.recv(BUF_SZ)
+        data = pickle.loads(data)  # De-serialize the response
 
-                # Send the HELLO message to the member, record the response, and print it
-                mem.send(pickle.dumps('HELLO'))
-                res = pickle.load(mem.recv(1024))  # De-serialize the response
-                print('OK', repr(res))
-        # exit the server successfully
-        sys.exit(0)
-    # If the data received is null/none, we want to exit the server with an error message
-    else:
-        print('Error: No data received')
-        # exit the server with error
-        sys.exit(1)
+        # If we receive data (not null), start talking to each member
+        if data is not None:
+            print(f'Connected with data!')
+            # Loop through the data dict to send a message to each member of the group. Need to create a new socket connection
+            # which is named mem (member)
+            for d in data:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as mem:
+                    # Try to make the connect to the host, if an error occurs, print message and continue to next member
+                    try:
+                        mem.settimeout(timeout)
+                        mem.connect((d.get('host'), d.get('port')))
+                    except socket.timeout as to:
+                        print(to)
+                        continue
+                    except OSError as err:
+                        print(err)
+                        continue
+
+                    # Send the HELLO message to the member, record the response, and print it
+                    mem.send(pickle.dumps('HELLO'))
+                    res = mem.recv(BUF_SZ)
+                    pickle.loads(res)  # De-serialize the response
+                    print('OK', repr(res))
+            # exit the server successfully
+            sys.exit(0)
+        # If the data received is null/none, we want to exit the server with an error message
+        else:
+            print('Error: No data received')
+            # exit the server with error
+            sys.exit(1)
+
+
+# Main function to run client program
+if __name__ == '__main__':
+    client()
