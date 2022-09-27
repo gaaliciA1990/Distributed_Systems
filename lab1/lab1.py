@@ -24,16 +24,8 @@ def simpleClient():
     # Set up connection with the server using a socket named sock
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         print('Contacting Server...\n')
-        # First try the connect, if failed, we display the message and exit
-        try:
-            sock.settimeout(timeout)
-            sock.connect((HOST, PORT))
-        except socket.timeout as to:
-            print(failedMsg, repr(to))
-            sys.exit(1)  # Exit the server with error
-        except OSError as err:
-            print(failedMsg, repr(err))
-            sys.exit(1)  # Exit the server with error
+        # Call the helper function to contact server
+        contactServer(sock, HOST, PORT)
 
         # Send the JOIN message and receive the response in a variable
         sock.sendall(pickle.dumps('JOIN'))
@@ -46,16 +38,8 @@ def simpleClient():
             # which is named mem (member)
             for d in data:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as mem:
-                    # Try to make the connect to the host, if an error occurs, print message and continue to next member
-                    try:
-                        mem.settimeout(timeout)
-                        mem.connect((d.get('host'), d.get('port')))
-                    except socket.timeout as to:
-                        print(failedMsg, repr(to))
-                        continue
-                    except OSError as err:
-                        print(failedMsg, repr(err))
-                        continue
+                    # Call the helper function to contact server
+                    contactServer(mem, d.get('host'), d.get('port'))
 
                     # Send the HELLO message to the member, record the response, and print it
                     mem.send(pickle.dumps('HELLO'))
@@ -68,6 +52,20 @@ def simpleClient():
             print('Error: No data received\n')
             # exit the server with error
             sys.exit(1)
+
+
+# To remove duplicated code, this function will handle the connection checks
+def contactServer(connection, host, port):
+    # First try the connect, if failed, we display the message and exit
+    try:
+        connection.settimeout(timeout)
+        connection.connect((host, port))
+    except socket.timeout as to:
+        print(failedMsg, repr(to))
+        sys.exit(1)  # Exit the server with error
+    except OSError as err:
+        print(failedMsg, repr(err))
+        sys.exit(1)  # Exit the server with error
 
 
 # Main function to run client program
