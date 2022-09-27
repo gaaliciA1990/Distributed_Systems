@@ -24,8 +24,10 @@ def simpleClient():
     # Set up connection with the server using a socket named sock
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         print('Contacting Server...\n')
-        # Call the helper function to contact server
-        contactServer(sock, HOST, PORT)
+
+        # Call the helper function to contact server and check response
+        if contactServer(sock, HOST, PORT) is False:
+            sys.exit(1)  # Exit the server with error
 
         # Send the JOIN message and receive the response in a variable
         sock.sendall(pickle.dumps('JOIN'))
@@ -38,8 +40,9 @@ def simpleClient():
             # which is named mem (member)
             for d in data:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as mem:
-                    # Call the helper function to contact server
-                    contactServer(mem, d.get('host'), d.get('port'))
+                    # Call the helper function to contact server and check if false
+                    if contactServer(mem, d.get('host'), d.get('port')) is False:
+                        continue  # move on to the next server
 
                     # Send the HELLO message to the member, record the response, and print it
                     mem.send(pickle.dumps('HELLO'))
@@ -54,18 +57,20 @@ def simpleClient():
             sys.exit(1)
 
 
-# To remove duplicated code, this function will handle the connection checks
+# To remove duplicated code, this function will handle the connection checks. If connection failed,
+# return false, else true
 def contactServer(connection, host, port):
     # First try the connect, if failed, we display the message and exit
     try:
         connection.settimeout(timeout)
         connection.connect((host, port))
+        return True
     except socket.timeout as to:
         print(failedMsg, repr(to))
-        sys.exit(1)  # Exit the server with error
+        return False
     except OSError as err:
         print(failedMsg, repr(err))
-        sys.exit(1)  # Exit the server with error
+        return False
 
 
 # Main function to run client program
