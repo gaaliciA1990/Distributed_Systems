@@ -34,7 +34,6 @@ class SimpleClient:
         self.host = argHost
         self.port = argPort
 
-    #
     def connectToServer(self):
         # Set up connection with the server using a socket named sock
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -50,28 +49,27 @@ class SimpleClient:
 
             self.sendMsgToMember(data)
 
-    def sendMsgToMember(self, data):
-        # If we receive data (not null), send message to each member
-        if data is not None:
-            print(f'Connected with data!\n')
-            # Loop through the data dict to send a message to each member of the group.
-            for d in data:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as mem:
-                    # Call the helper function to contact server and check if false
-                    if self.contactServer(mem, d.get('host'), d.get('port')) is False:
-                        continue  # move on to the next server
 
-                    # Send the HELLO message to the member, record the response, and print it
-                    mem.send(pickle.dumps('HELLO'))
-                    res = pickle.loads(mem.recv(BUF_SZ))  # De-serialize the response
-                    print(repr(res))
-            # exit the server successfully
-            sys.exit(0)
+    def sendMsgToMember(self, data):
         # If the data received is null/none, we want to exit the server with an error message
-        else:
+        if data is None:
             print('Error: No data received\n')
             # exit the server with error
             sys.exit(1)
+
+        # If data is not null, send message to each member
+        print(f'Connected with data!\n')
+        # Loop through the data dict to send a message to each member of the group.
+        for d in data:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as mem:
+                # Call the helper function to contact server and check if false
+                if self.contactServer(mem, d.get('host'), d.get('port')) is False:
+                    continue  # move on to the next server
+
+                # Send the HELLO message to the member, record the response, and print it
+                mem.send(pickle.dumps('HELLO'))
+                res = pickle.loads(mem.recv(BUF_SZ))  # De-serialize the response
+                print(repr(res))
 
     # To remove duplicated code, this function will handle the connection checks. If connection failed,
     # return false, else true
@@ -99,3 +97,4 @@ if __name__ == '__main__':
 
     client = SimpleClient(inputHost, inputPort)
     client.connectToServer()
+    exit(0)  # Successful exit
