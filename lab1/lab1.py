@@ -49,7 +49,6 @@ class SimpleClient:
 
             self.sendMsgToMember(data)
 
-
     def sendMsgToMember(self, data):
         # If the data received is null/none, we want to exit the server with an error message
         if data is None:
