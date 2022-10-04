@@ -18,6 +18,7 @@ import socket
 import pickle
 import sys
 
+
 class BullyClient:
     def __init__(self):
         pass
