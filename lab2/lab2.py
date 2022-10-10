@@ -11,6 +11,7 @@ import sys
 from enum import Enum
 
 
+# noinspection PyMethodMayBeStatic
 class BullyClient:
     """
     The Bully Client will send and receive messages to determine who is the leader (bully)
@@ -45,7 +46,7 @@ class BullyClient:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             print('Contacting GCD Server...\n')
             # check we connect to the server successfully
-            if self.contact_gcd_server(sock, self.gcd_address[0], self.gcd_address[1]) is False:
+            if self.contact_server(sock, self.gcd_address[0], self.gcd_address[1]) is False:
                 sys.exit(1)
 
             print('Successfully connected to GCD Server...\n')
@@ -54,13 +55,15 @@ class BullyClient:
             self.member_connections = pickle.loads(sock.recv(self.BUF_SIZE))
             print(self.member_connections)
 
+            self.send_msg(self.member_connections)
+
             while True:
                 events = self.selector.select()
                 for key, mask in events:
                     callback = key.data  # reference variable to the data passed in selector.register
                     callback(key.fileobj, mask)
 
-    def contact_gcd_server(self, connection, host, port):
+    def contact_server(self, connection, host, port):
         """
         This function will handle the connection checks. If connection failed, return false
         else true
@@ -117,6 +120,19 @@ class BullyClient:
             self.member_states[key] = State.WAITING_FOR_ANY_MESSAGE
             print('This {} was set to {}'.format(new_conn, self.member_states[key]))
 
+    def send_msg(self, connected_members):
+        election_msg = 'ELECTION'
+
+        if connected_members is None:
+            print('No other members connected, you win!')
+
+        for member in connected_members.values():
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as peer:
+                if self.contact_server(peer, member[0], member[1]) is False:
+                    continue  # set member state to QUIESCENT
+                peer.send(pickle.dumps(election_msg))
+                print('Message {} sent'.format(election_msg))
+
     def receive_msg(self, member):
         message = pickle.loads(member.recv(self.BUF_SIZE))
         if message is None:
@@ -124,11 +140,11 @@ class BullyClient:
             # set their state to default
             self.selector.unregister(member)
             member.close()
-        elif message is 'ELECTION':
+        elif message == 'ELECTION':
             print('election started')
-        elif message is 'COORDINATOR':
+        elif message == 'COORDINATOR':
             print('victor received')
-        elif message is 'OK':
+        elif message == 'OK':
             print('OK received')
 
     def set_state(self, state, peer=None):
