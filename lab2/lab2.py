@@ -29,7 +29,7 @@ class BullyClient:
         self.leader = None  # election pending as indicated by None
         self.selector = selectors.DefaultSelector()
 
-        self.listening_server = self.create_listening_server()
+        self.listening_server, self.listening_address = self.create_listening_server()
 
         self.BUF_SIZE = 1024
         self.timeout = float(1.500)
@@ -50,7 +50,8 @@ class BullyClient:
                 sys.exit(1)
 
             print('Successfully connected to GCD Server...\n')
-            join_msg = ('JOIN', (self.process_id, self.gcd_address))
+
+            join_msg = ('JOIN', (self.process_id, self.listening_address))
             sock.sendall(pickle.dumps(join_msg))
             self.member_connections = pickle.loads(sock.recv(self.BUF_SIZE))
             print(self.member_connections)
@@ -60,8 +61,12 @@ class BullyClient:
             while True:
                 events = self.selector.select()
                 for key, mask in events:
-                    callback = key.data  # reference variable to the data passed in selector.register
-                    callback(key.fileobj, mask)
+                    if key.fileobj == self.listening_server:
+                        self.accept_new_connection()
+                    elif mask & selectors.EVENT_READ:
+                        self.receive_msg(key.fileobj)
+                    else:
+                        self.send_msg(key.fileobj)
 
     def contact_server(self, connection, host, port):
         """
@@ -87,9 +92,9 @@ class BullyClient:
     def create_listening_server(self):
         """
         Creating a listening server so peers can connect to my client
-        :return: tuple of the listener connection and address
+        :return: tuple of the listener address
         """
-        listening_host = socket.gethostname()  # get the host name
+        listening_host = 'localhost'  # get the host name
         port = 0  # using 0 as our port, as this will make the library automatically choose avail. port
 
         listening_server = socket.socket()  # create instance of a socket
@@ -104,9 +109,9 @@ class BullyClient:
         listening_server.setblocking(False)
         self.selector.register(listening_server, selectors.EVENT_READ, self.accept_new_connection)
 
-        return listening_server
+        return listening_server, (listening_host, listening_server.getsockname()[1])
 
-    def accept_new_connection(self, new_mem):
+    def accept_new_connection(self, new_mem, mask):
         new_conn, new_addr = new_mem.accept()
         print('New connection with {} at address {}'.format(new_conn, new_addr))
         new_conn.setblocking(False)
@@ -128,13 +133,17 @@ class BullyClient:
 
         for member in connected_members.values():
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as peer:
+                if member[1] == self.listening_address[1]:
+                    continue  # we don't want to send a message to ourselves
                 if self.contact_server(peer, member[0], member[1]) is False:
                     continue  # set member state to QUIESCENT
+
                 peer.send(pickle.dumps(election_msg))
                 print('Message {} sent'.format(election_msg))
 
     def receive_msg(self, member):
         message = pickle.loads(member.recv(self.BUF_SIZE))
+
         if message is None:
             print('No message received, closing connection: {}'.format(member))
             # set their state to default
