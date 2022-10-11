@@ -36,9 +36,6 @@ class State(Enum):
         return self not in (State.SEND_ELECTION, State.SEND_VICTORY, State.SEND_OK)
 
 
-# noinspection PyMethodMayBeStatic,PyTypeChecker
-
-
 class BullyClient:
     """
     The Bully Client will send and receive messages to determine who is the leader (bully)
@@ -99,7 +96,7 @@ class BullyClient:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             print('Contacting GCD Server...\n')
             # check we connect to the server successfully
-            if self.contact_server(sock, self.gcd_address[0], self.gcd_address[1]) is False:
+            if self.contact_server(sock, self.gcd_address[0], self.gcd_address[1], False) is False:
                 sys.exit(1)
 
             print('Successfully connected to GCD Server...\n')
@@ -109,10 +106,11 @@ class BullyClient:
             self.member_connections = pickle.loads(sock.recv(self.BUF_SIZE))
             print(self.member_connections)
 
-    def contact_server(self, soc, host, port):
+    def contact_server(self, soc, host, port, register):
         """
         This helper function will handle the connection checks. If connection failed, return false
         else true
+        :param register: boolean to determine if we need to register a connection to the selector
         :param soc: the socket stream
         :param host: host address to connect to
         :param port: port to connect to
@@ -122,6 +120,8 @@ class BullyClient:
         try:
             soc.settimeout(self.timeout)
             soc.connect((host, port))
+            if register:
+                self.selector.register(soc, selectors.EVENT_READ)  # make sure to register the socket as Read to accept messages
             return True
         except socket.timeout as to:
             print(self.failed_msg, repr(to))
@@ -163,9 +163,7 @@ class BullyClient:
         new_conn, new_addr = member_socket.accept()
         print('Accepted connection at address {}\n'.format(new_addr))
         new_conn.setblocking(False)
-        events = selectors.EVENT_READ | selectors.EVENT_WRITE
-
-        self.selector.register(new_conn, events)
+        events = selectors.EVENT_READ
 
         # populate the member_states dict with the members(key) and set their state (value) to WAITING
         self.set_state(State.WAITING_FOR_ANY_MESSAGE, new_conn)
@@ -246,11 +244,11 @@ class BullyClient:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as member_socket:
                 # Call the helper function to contact server and check if false
                 self.connection_states[member_socket] = State.SEND_ELECTION
-                if self.contact_server(member_socket, self.member_connections[member_pid][0], self.member_connections[member_pid][1]) is False:
+                if self.contact_server(member_socket, self.member_connections[member_pid][0], self.member_connections[member_pid][1], True) is False:
                     self.set_quiescent(member_socket)
                 try:
-                    self.send_msg(member_socket)
                     self.set_state(State.SEND_ELECTION, member_socket)
+                    self.send_msg(member_socket)
                 except ConnectionError as err:
                     print(self.failed_msg, repr(err))
                 except Exception as err:
@@ -294,6 +292,9 @@ class BullyClient:
         :return:
         """
         self.connection_states[member_socket] = state
+
+        if state.is_incoming():
+            self.selector.register(member_socket, selectors.EVENT_READ)
 
     def set_quiescent(self, member_socket):
         """
