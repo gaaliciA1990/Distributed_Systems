@@ -12,7 +12,33 @@ import sys
 from enum import Enum
 
 
+class State(Enum):
+    """
+    Enumeration of states I can be in (copied from professor notes)
+    """
+    QUIESCENT = 'QUIESCENT'  # default state
+
+    # Outgoing message is pending
+    SEND_ELECTION = 'ELECTION'
+    SEND_VICTORY = 'COORDINATOR'
+    SEND_OK = 'OK'
+
+    # Incoming message is pending
+    WAITING_FOR_OK = 'WAIT_OK'  # When I've sent them an ELECTION message
+    WAITING_FOR_VICTOR = 'WHO IS THE WINNER?'  # This one only applies to myself
+    WAITING_FOR_ANY_MESSAGE = 'WAITING'  # When I've done an accept on their connect to my server
+
+    def is_incoming(self):
+        """
+        Helper method to return fi the state is available to accept messages
+        :return: True if the state is not in the list, else False
+        """
+        return self not in (State.SEND_ELECTION, State.SEND_VICTORY, State.SEND_OK)
+
+
 # noinspection PyMethodMayBeStatic,PyTypeChecker
+
+
 class BullyClient:
     """
     The Bully Client will send and receive messages to determine who is the leader (bully)
@@ -42,6 +68,30 @@ class BullyClient:
         processes for handling outgoing and incoming messages
         :return:
         """
+        self.join_group()
+
+        self.start_election()
+
+        try:
+            while True:
+                events = self.selector.select(timeout=self.timeout)
+                for key, mask in events:
+                    if key.fileobj == self.listening_server:
+                        self.accept_new_connection(key.fileobj)
+                    elif mask & selectors.EVENT_READ:
+                        self.receive_msg(key.fileobj)
+                    else:
+                        self.send_msg(key.fileobj)
+        except KeyboardInterrupt:
+            print('Keyboard interrupt, exiting')
+        except socket.timeout as to:
+            print(self.failed_msg, repr(to))
+        except OSError as err:
+            print(self.failed_msg, repr(err))
+        finally:
+            self.selector.close()
+
+    def join_group(self):
         # Set up connection with the GCD server
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             print('Contacting GCD Server...\n')
@@ -56,30 +106,9 @@ class BullyClient:
             self.member_connections = pickle.loads(sock.recv(self.BUF_SIZE))
             print(self.member_connections)
 
-            self.start_election()
-
-            try:
-                while True:
-                    events = self.selector.select(timeout=self.timeout)
-                    for key, mask in events:
-                        if key.fileobj == self.listening_server:
-                            self.accept_new_connection(key.fileobj)
-                        elif mask & selectors.EVENT_READ:
-                            self.receive_msg(key.fileobj)
-                        else:
-                            self.send_msg(key.fileobj)
-            except KeyboardInterrupt:
-                print('Keyboard interrupt, exiting')
-            except socket.timeout as to:
-                print(self.failed_msg, repr(to))
-            except OSError as err:
-                print(self.failed_msg, repr(err))
-            finally:
-                self.selector.close()
-
     def contact_server(self, soc, host, port):
         """
-        This function will handle the connection checks. If connection failed, return false
+        This helper function will handle the connection checks. If connection failed, return false
         else true
         :param soc: the socket stream
         :param host: host address to connect to
@@ -106,19 +135,19 @@ class BullyClient:
         listening_host = 'localhost'  # get the host name
         port = 0  # using 0 as our port, as this will make the library automatically choose avail. port
 
-        listening_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # create instance of a socket
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # create instance of a socket
         try:
-            listening_server.bind((listening_host, port))  # bind host and port together
+            server.bind((listening_host, port))  # bind host and port together
         except socket.error as err:  # if the binding fails, we want to be notified
             print('Failed to bind listening_server: {}'.format(err))
             sys.exit(1)  # system should close because client can't receive messages
 
         # configure how many clients the server can listen to at once, I want 1000 b/c it's a nice number
-        listening_server.listen(1000)
-        listening_server.setblocking(False)  # set the socket to a non-blocking mode
-        self.selector.register(listening_server, selectors.EVENT_READ, self.accept_new_connection)
+        server.listen(1000)
+        server.setblocking(False)  # set the socket to a non-blocking mode
+        self.selector.register(server, selectors.EVENT_READ, data=None)  # register the socket
 
-        return listening_server, (listening_host, listening_server.getsockname()[1])
+        return server, server.getsockname()
 
     def accept_new_connection(self, member_socket):
         """
@@ -136,29 +165,39 @@ class BullyClient:
         self.selector.register(new_conn, events)
 
         # populate the member_states dict with the members(key) and set their state (value) to WAITING
-        self.connection_states[new_addr] = State.WAITING_FOR_ANY_MESSAGE
-        print('New connection was set to {} state\n'.format(self.connection_states[new_addr]))
+        self.set_state(State.WAITING_FOR_ANY_MESSAGE, new_conn)
+        print('New connection was set to {} state\n'.format(self.connection_states[new_conn]))
 
     def send_msg(self, member_socket):
         """
         This method sends out messages to the member after confirming it's not us
-        :param member_pid: the recipient of the message
-        :param message: the message to send to the member
+        :param member_socket: the recipient socket of the message
         :return:
         """
         state = self.get_state(member_socket)
 
         try:
-            self.send(member_socket, state.value, self.member_connections)
+            self.send(member_socket, state.value)
         except ConnectionError as err:
             print(self.failed_msg, repr(err))
         except Exception as err:
             print(self.failed_msg, repr(err))
 
         if state == State.SEND_ELECTION:
-            self.set_state(State.WAITING_FOR_OK, member_socket, switch_mode=True)
+            self.set_state(State.WAITING_FOR_OK, member_socket)
+            self.selector.modify(member_socket, selectors.EVENT_READ)
         else:
             self.set_quiescent(member_socket)
+
+    def send(self, member_sock, value):
+        """
+        This method facilitates the send functionality of the message associated with the member_sock
+        :param member_sock: the socket member
+        :param value: the state of the member socket
+        :return:
+        """
+        member_sock.send(pickle.dumps(value))
+        print('Message {} sent\n'.format(value))
 
     def receive_msg(self, member_socket):
         """
@@ -173,7 +212,7 @@ class BullyClient:
             self.set_quiescent(member_socket)
         elif message == 'ELECTION':
             print('Received {}'.format(message))
-            self.connection_states[member_socket] = State.SEND_OK
+            self.set_state(State.SEND_OK, member_socket)
             self.send_msg(member_socket)
             self.start_election()
         elif message == 'COORDINATOR':
@@ -182,7 +221,7 @@ class BullyClient:
             self.set_quiescent(member_socket)
         elif message == 'OK':
             print('Received {}'.format(message))
-            self.connection_states[member_socket] = State.WAITING_FOR_VICTOR
+            self.set_state(State.WAITING_FOR_VICTOR, member_socket)
         else:
             print('Unexpected Received {}'.format(message))
 
@@ -208,12 +247,18 @@ class BullyClient:
                     self.set_quiescent(member_socket)
                 try:
                     self.send_msg(member_socket)
+                    self.set_state(State.SEND_ELECTION, member_socket)
                 except ConnectionError as err:
                     print(self.failed_msg, repr(err))
                 except Exception as err:
                     print(self.failed_msg, repr(err))
 
     def declare_victory(self):
+        """
+        This method will set all of the connection_states to Send_Victory and then
+        sends the corresponding victory message
+        :return:
+        """
         for soc in self.member_connections:
             self.connection_states[soc] = State.SEND_VICTORY
             self.send_msg(soc)
@@ -236,47 +281,27 @@ class BullyClient:
         """
         return self.connection_states[member_socket]
 
+    def set_state(self, state, member_socket):
+        """
+        This sets the state of a member_socket. If the message is Send_Election, we want to update the
+        selector to EVENT_READ so they can receive messages after sending one
+        :param state: The ENUM state of the socket
+        :param member_socket: the connection socket used as a key for connection_states
+        :param switch_mode: signal to reregister with a different mask in the selector
+        :return:
+        """
+        self.connection_states[member_socket] = state
+
     def set_quiescent(self, member_socket):
+        """
+        This method will set the state of a connection to Quiescent and unregister the socket from the
+        selector and close the socket
+        :param member_socket:
+        :return:
+        """
         self.connection_states[member_socket] = State.QUIESCENT
         self.selector.unregister(member_socket)
         member_socket.close()
-
-    def pr_sock(self, member_sock):
-        if member_sock is None or member_sock == self or member_sock == self.listening_server:
-            return 'self'
-        return self.cpr_sock(member_sock)
-
-    def send(self, member_sock, value, members_connections):
-        member_sock.send(pickle.dumps(value))
-        print('Message {} sent\n'.format(value))
-
-    def set_state(self, state, member_socket, switch_mode):
-        self.connection_states[member_socket] = state
-        self.selector.modify(member_socket)
-
-
-class State(Enum):
-    """
-    Enumeration of states I can be in (copied from professor notes)
-    """
-    QUIESCENT = 'QUIESCENT'  # default state
-
-    # Outgoing message is pending
-    SEND_ELECTION = 'ELECTION'
-    SEND_VICTORY = 'COORDINATOR'
-    SEND_OK = 'OK'
-
-    # Incoming message is pending
-    WAITING_FOR_OK = 'WAIT_OK'  # When I've sent them an ELECTION message
-    WAITING_FOR_VICTOR = 'WHO IS THE WINNER?'  # This one only applies to myself
-    WAITING_FOR_ANY_MESSAGE = 'WAITING'  # When I've done an accept on their connect to my server
-
-    def is_incoming(self):
-        """
-        Helper method to return fi the state is available to accept messages
-        :return: True if the state is not in the list, else False
-        """
-        return self not in (State.SEND_ELECTION, State.SEND_VICTORY, State.SEND_OK)
 
 
 if __name__ == '__main__':
