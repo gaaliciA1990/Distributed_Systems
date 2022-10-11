@@ -3,6 +3,7 @@ CPSC 5520, Seattle University
 Author: Alicia Garcia
 Version: 1.0
 """
+import types
 from datetime import date
 import selectors
 import socket
@@ -11,7 +12,7 @@ import sys
 from enum import Enum
 
 
-# noinspection PyMethodMayBeStatic
+# noinspection PyMethodMayBeStatic,PyTypeChecker
 class BullyClient:
     """
     The Bully Client will send and receive messages to determine who is the leader (bully)
@@ -25,7 +26,7 @@ class BullyClient:
         self.process_id = (days_to_bd, su_id)
 
         self.member_connections = {}  # creating dictionary for holding connected members
-        self.member_states = {}  # creating dictionary for holding member states
+        self.connection_states = {}  # creating dictionary for states of the connections with me
         self.leader = None  # election pending as indicated by None
         self.selector = selectors.DefaultSelector()
 
@@ -56,17 +57,26 @@ class BullyClient:
             self.member_connections = pickle.loads(sock.recv(self.BUF_SIZE))
             print(self.member_connections)
 
-            self.send_msg(self.member_connections)
+            self.send_msg('ELECTION')
 
-            while True:
-                events = self.selector.select()
-                for key, mask in events:
-                    if key.fileobj == self.listening_server:
-                        self.accept_new_connection()
-                    elif mask & selectors.EVENT_READ:
-                        self.receive_msg(key.fileobj)
-                    else:
-                        self.send_msg(key.fileobj)
+            try:
+                while True:
+                    events = self.selector.select(timeout=self.timeout)
+                    for key, mask in events:
+                        if key.fileobj == self.listening_server:
+                            self.accept_new_connection(key.fileobj)
+                        elif mask & selectors.EVENT_READ:
+                            self.receive_msg(key.fileobj)
+                        else:
+                            self.send_msg(key.fileobj)
+            except KeyboardInterrupt:
+                print('Keyboard interrupt, exiting')
+            except socket.timeout as to:
+                print(self.failed_msg, repr(to))
+            except OSError as err:
+                print(self.failed_msg, repr(err))
+            finally:
+                self.selector.close()
 
     def contact_server(self, connection, host, port):
         """
@@ -75,7 +85,7 @@ class BullyClient:
         :param connection: the socket stream
         :param host: host address to connect to
         :param port: port to connect to
-        :return: false if connection failse, otherwise true
+        :return: false if connection fails, otherwise true
         """
         # First try the connect, if failed, we display the message and exit
         try:
@@ -92,12 +102,12 @@ class BullyClient:
     def create_listening_server(self):
         """
         Creating a listening server so peers can connect to my client
-        :return: tuple of the listener address
+        :return: listening server and tuple of the listener address
         """
         listening_host = 'localhost'  # get the host name
         port = 0  # using 0 as our port, as this will make the library automatically choose avail. port
 
-        listening_server = socket.socket()  # create instance of a socket
+        listening_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # create instance of a socket
         try:
             listening_server.bind((listening_host, port))  # bind host and port together
         except socket.error as err:  # if the binding fails, we want to be notified
@@ -106,61 +116,103 @@ class BullyClient:
 
         # configure how many clients the server can listen to at once, I want 1000 b/c it's a nice number
         listening_server.listen(1000)
-        listening_server.setblocking(False)
+        listening_server.setblocking(False)  # set the socket to a non-blocking mode
         self.selector.register(listening_server, selectors.EVENT_READ, self.accept_new_connection)
 
         return listening_server, (listening_host, listening_server.getsockname()[1])
 
-    def accept_new_connection(self, new_mem, mask):
-        new_conn, new_addr = new_mem.accept()
-        print('New connection with {} at address {}'.format(new_conn, new_addr))
+    def accept_new_connection(self, member):
+        """
+        This method will accept connection requests when a member tries to contact me.
+        If the member doesn't already exist in my list of member_connections, I add them
+        and set their state accordingly
+        :param member: member in the server attempting to connect with my server
+        :return:
+        """
+        new_conn, new_addr = member.accept()
+        print('Accepted connection at address {}\n'.format(new_addr))
         new_conn.setblocking(False)
-        self.selector.register(new_conn, selectors.EVENT_READ, self.receive_msg)
+        events = selectors.EVENT_READ | selectors.EVENT_WRITE
+
+        self.selector.register(new_conn, events)
 
         # populate the member_states dict with the members(key) and set their state (value) to WAITING
-        for key in self.member_connections.keys():
-            if key is not new_conn:  # if the new_connection is not in the list of members, we want to add it to our list
-                self.member_connections = pickle.loads(new_conn.recv(self.BUF_SIZE))
-            # Add the new_conn to the member_states dict with their state
-            self.member_states[key] = State.WAITING_FOR_ANY_MESSAGE
-            print('This {} was set to {}'.format(new_conn, self.member_states[key]))
+        self.connection_states[new_conn] = State.WAITING_FOR_ANY_MESSAGE
+        print('New connection was set to {} state\n'.format(self.connection_states))
 
-    def send_msg(self, connected_members):
-        election_msg = 'ELECTION'
+    def send_msg(self, member, message):
+        """
 
-        if connected_members is None:
-            print('No other members connected, you win!')
+        :param member:
+        :param message:
+        :return:
+        """
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as peer:
+            if self.contact_server(peer, peer[0], peer[1]) is False:
+                self.connection_states[peer] = State.QUIESCENT
+                self.selector.unregister(peer)
+                peer.close()
+                continue  # Remove the member and continue to next one
 
-        for member in connected_members.values():
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as peer:
-                if member[1] == self.listening_address[1]:
-                    continue  # we don't want to send a message to ourselves
-                if self.contact_server(peer, member[0], member[1]) is False:
-                    continue  # set member state to QUIESCENT
-
-                peer.send(pickle.dumps(election_msg))
-                print('Message {} sent'.format(election_msg))
+            peer.send(pickle.dumps(message))
+            print('Message {} sent\n'.format(message))
 
     def receive_msg(self, member):
+        """
+        This method allows me to receive messages from other members in the server
+        :param member: the socket sending us a message
+        :return: none
+        """
         message = pickle.loads(member.recv(self.BUF_SIZE))
 
         if message is None:
-            print('No message received, closing connection: {}'.format(member))
-            # set their state to default
+            print('No message received, closing connection with: {}'.format(member))
+            self.connection_states[member] = State.QUIESCENT
             self.selector.unregister(member)
+            del self.connection_states[member]
             member.close()
         elif message == 'ELECTION':
-            print('election started')
+            print('Received {}'.format(message))
+            self.connection_states[member] = State.SEND_OK
+            member.send(pickle.dumps('OK'))
+            self.connection_states[member] = State.SEND_ELECTION
+            self.start_election()
         elif message == 'COORDINATOR':
-            print('victor received')
+            print('Received {}'.format(message))
+            self.connection_states[member] = State.QUIESCENT
+            print('The leader is now {}'.format(self.assign_leader(member)))
+            self.selector.unregister(member)
+            member.close()
         elif message == 'OK':
-            print('OK received')
+            print('Received {}'.format(message))
+            self.connection_states[member] = State.WAITING_FOR_VICTOR
 
-    def set_state(self, state, peer=None):
+    def start_election(self):
         """
-        :return: the state that of my client
+        This method sends a message to all members of the server to determine who's the leader. Message is
+        only broadcast to members who are greater than me
+        :return: the leader
         """
-        pass
+        print('Starting election')
+        message = 'ELECTION'
+
+        for member in self.member_connections.keys():
+            if member[0] < self.process_id[0]:
+                continue  # we don't need to contact or anyone who is less than us
+            if member[1] == self.process_id[1]:
+                continue  # we can assume this is us since it's our SUID, so we don't want to contact them
+            if member[0] == self.process_id[0] & member[1] < self.process_id[1]:
+                continue  # based on requirements, if we have same days_to_bday, check suid. If we are bigger, don't contact
+            self.send_msg(member, message)
+            self.client_state = State.WAITING_FOR_OK
+
+    def assign_leader(self, new_leader):
+        """
+        This method will assign the leader to the member passed
+        :param new_leader: member who won the election
+        :return: the new leader
+        """
+        return self.leader == new_leader
 
 
 class State(Enum):
