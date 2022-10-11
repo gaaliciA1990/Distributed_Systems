@@ -35,7 +35,6 @@ class BullyClient:
         self.BUF_SIZE = 1024
         self.timeout = float(1.500)
         self.failed_msg = 'Failed to connect: '
-        self.client_state = State.QUIESCENT  # set our state to default
 
     def connect(self):
         """
@@ -43,7 +42,7 @@ class BullyClient:
         processes for handling outgoing and incoming messages
         :return:
         """
-        # Set up connection with the server
+        # Set up connection with the GCD server
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             print('Contacting GCD Server...\n')
             # check we connect to the server successfully
@@ -57,7 +56,7 @@ class BullyClient:
             self.member_connections = pickle.loads(sock.recv(self.BUF_SIZE))
             print(self.member_connections)
 
-            self.send_msg('ELECTION')
+            self.start_election()
 
             try:
                 while True:
@@ -78,19 +77,19 @@ class BullyClient:
             finally:
                 self.selector.close()
 
-    def contact_server(self, connection, host, port):
+    def contact_server(self, soc, host, port):
         """
         This function will handle the connection checks. If connection failed, return false
         else true
-        :param connection: the socket stream
+        :param soc: the socket stream
         :param host: host address to connect to
         :param port: port to connect to
         :return: false if connection fails, otherwise true
         """
         # First try the connect, if failed, we display the message and exit
         try:
-            connection.settimeout(self.timeout)
-            connection.connect((host, port))
+            soc.settimeout(self.timeout)
+            soc.connect((host, port))
             return True
         except socket.timeout as to:
             print(self.failed_msg, repr(to))
@@ -138,25 +137,30 @@ class BullyClient:
 
         # populate the member_states dict with the members(key) and set their state (value) to WAITING
         self.connection_states[new_conn] = State.WAITING_FOR_ANY_MESSAGE
-        print('New connection was set to {} state\n'.format(self.connection_states))
+        print('New connection was set to {} state\n'.format(self.connection_states[new_conn]))
 
-    def send_msg(self, member, message):
+    def send_msg(self, member):
         """
-
-        :param member:
-        :param message:
+        This method sends out messages to the member after confirming it's not us
+        :param member: the recipient of the message
+        :param message: the message to send to the member
         :return:
         """
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as peer:
-            if self.contact_server(peer, peer[0], peer[1]) is False:
-                self.connection_states[peer] = State.QUIESCENT
-                self.selector.unregister(peer)
-                peer.close()
-                continue  # Remove the member and continue to next one
+        state = self.get_state(member)
 
-            peer.send(pickle.dumps(message))
-            print('Message {} sent\n'.format(message))
+        try:
+            member.send(pickle.dumps(state.value))
+            print('Message {} sent\n'.format())
+        except ConnectionError as err:
+            print(self.failed_msg, repr(err))
+        except Exception as err:
+            print(self.failed_msg, repr(err))
 
+        if state == State.SEND_ELECTION:
+            self.connection_states[member] = State.WAITING_FOR_OK
+        else:
+            self.set_quiescent(member)
+            
     def receive_msg(self, member):
         """
         This method allows me to receive messages from other members in the server
@@ -167,25 +171,21 @@ class BullyClient:
 
         if message is None:
             print('No message received, closing connection with: {}'.format(member))
-            self.connection_states[member] = State.QUIESCENT
-            self.selector.unregister(member)
-            del self.connection_states[member]
-            member.close()
+            self.set_quiescent(member)
         elif message == 'ELECTION':
             print('Received {}'.format(message))
             self.connection_states[member] = State.SEND_OK
-            member.send(pickle.dumps('OK'))
-            self.connection_states[member] = State.SEND_ELECTION
+            self.send_msg(member)
             self.start_election()
         elif message == 'COORDINATOR':
             print('Received {}'.format(message))
-            self.connection_states[member] = State.QUIESCENT
             print('The leader is now {}'.format(self.assign_leader(member)))
-            self.selector.unregister(member)
-            member.close()
+            self.set_quiescent(member)
         elif message == 'OK':
             print('Received {}'.format(message))
             self.connection_states[member] = State.WAITING_FOR_VICTOR
+        else:
+            print('Received {}'.format(message))
 
     def start_election(self):
         """
@@ -193,7 +193,6 @@ class BullyClient:
         only broadcast to members who are greater than me
         :return: the leader
         """
-        print('Starting election')
         message = 'ELECTION'
 
         for member in self.member_connections.keys():
@@ -203,8 +202,20 @@ class BullyClient:
                 continue  # we can assume this is us since it's our SUID, so we don't want to contact them
             if member[0] == self.process_id[0] & member[1] < self.process_id[1]:
                 continue  # based on requirements, if we have same days_to_bday, check suid. If we are bigger, don't contact
-            self.send_msg(member, message)
-            self.client_state = State.WAITING_FOR_OK
+            print('Starting election')
+            self.send_msg(self.member_connections[member])
+
+        # if my state doesn't change from SEND_ELECTION, we can assume no one else is bigger than me
+        # and I can send the
+        if self.client_state is not State.SEND_ELECTION:
+            self.declare_victory()
+
+    def declare_victory(self):
+        for member in self.member_connections:
+            self.connection_states[member] = State.SEND_VICTORY
+            self.send_msg(member)
+        self.assign_leader(self.process_id)
+        print('Leader is self')
 
     def assign_leader(self, new_leader):
         """
@@ -213,6 +224,19 @@ class BullyClient:
         :return: the new leader
         """
         return self.leader == new_leader
+
+    def get_state(self, member):
+        """
+        Return the state of a given member
+        :param member: member in the connections
+        :return: return the state value
+        """
+        return self.connection_states[member]
+
+    def set_quiescent(self, member):
+        self.connection_states[member] = State.QUIESCENT
+        self.selector.unregister(member)
+        member.close()
 
 
 class State(Enum):
