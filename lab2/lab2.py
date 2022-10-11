@@ -92,7 +92,10 @@ class BullyClient:
             self.selector.close()
 
     def join_group(self):
-        # Set up connection with the GCD server
+        """
+        Create a connection to the GCD server
+        :return:
+        """
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             print('Contacting GCD Server...\n')
             # check we connect to the server successfully
@@ -256,7 +259,7 @@ class BullyClient:
     def declare_victory(self):
         """
         This method will set all of the connection_states to Send_Victory and then
-        sends the corresponding victory message
+        sends the corresponding victory message.
         :return:
         """
         for soc in self.member_connections:
