@@ -65,6 +65,8 @@ class BullyClient:
         processes for handling outgoing and incoming messages
         :return:
         """
+        self.selector.register(self.listening_server, selectors.EVENT_READ, data=None)  # register the socket
+
         self.join_group()
 
         self.start_election()
@@ -74,7 +76,7 @@ class BullyClient:
                 events = self.selector.select(timeout=self.timeout)
                 for key, mask in events:
                     if key.fileobj == self.listening_server:
-                        self.accept_new_connection(key.fileobj)
+                        self.accept_new_connection()
                     elif mask & selectors.EVENT_READ:
                         self.receive_msg(key.fileobj)
                     else:
@@ -116,12 +118,12 @@ class BullyClient:
         :param port: port to connect to
         :return: false if connection fails, otherwise true
         """
-        # First try the connect, if failed, we display the message and exit
+        # First try to connect, if failed, we display the message and exit
         try:
             soc.settimeout(self.timeout)
             soc.connect((host, port))
             if register:
-                self.selector.register(soc, selectors.EVENT_READ)  # make sure to register the socket as Read to accept messages
+                self.selector.register(self.listening_server, selectors.EVENT_READ)  # make sure to register the socket as Read to accept messages
             return True
         except socket.timeout as to:
             print(self.failed_msg, repr(to))
@@ -148,11 +150,10 @@ class BullyClient:
         # configure how many clients the server can listen to at once, I want 1000 b/c it's a nice number
         server.listen(1000)
         server.setblocking(False)  # set the socket to a non-blocking mode
-        self.selector.register(server, selectors.EVENT_READ, data=None)  # register the socket
 
         return server, server.getsockname()
 
-    def accept_new_connection(self, member_socket):
+    def accept_new_connection(self):
         """
         This method will accept connection requests when a member tries to contact me.
         If the member doesn't already exist in my list of member_connections, I add them
@@ -160,10 +161,9 @@ class BullyClient:
         :param member_socket: member in the server attempting to connect with my server
         :return:
         """
-        new_conn, new_addr = member_socket.accept()
+        new_conn, new_addr = self.listening_server.accept()
         print('Accepted connection at address {}\n'.format(new_addr))
         new_conn.setblocking(False)
-        events = selectors.EVENT_READ
 
         # populate the member_states dict with the members(key) and set their state (value) to WAITING
         self.set_state(State.WAITING_FOR_ANY_MESSAGE, new_conn)
@@ -294,7 +294,7 @@ class BullyClient:
         self.connection_states[member_socket] = state
 
         if state.is_incoming():
-            self.selector.register(member_socket, selectors.EVENT_READ)
+            self.selector.modify(self.listening_server, selectors.EVENT_READ)
 
     def set_quiescent(self, member_socket):
         """
