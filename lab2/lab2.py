@@ -122,8 +122,8 @@ class BullyClient:
         try:
             soc.settimeout(self.timeout)
             soc.connect((host, port))
-            if register:
-                self.selector.register(self.listening_server, selectors.EVENT_READ)  # make sure to register the socket as Read to accept messages
+            """if register:
+                self.selector.register(self.listening_server, selectors.EVENT_READ)  # make sure to register the socket as Read to accept messages"""
             return True
         except socket.timeout as to:
             print(self.failed_msg, repr(to))
@@ -150,7 +150,6 @@ class BullyClient:
         # configure how many clients the server can listen to at once, I want 1000 b/c it's a nice number
         server.listen(1000)
         server.setblocking(False)  # set the socket to a non-blocking mode
-
         return server, server.getsockname()
 
     def accept_new_connection(self):
@@ -293,7 +292,7 @@ class BullyClient:
         """
         self.connection_states[member_socket] = state
 
-        if state.is_incoming():
+        if state.SEND_ELECTION:
             self.selector.modify(self.listening_server, selectors.EVENT_READ)
 
     def set_quiescent(self, member_socket):
