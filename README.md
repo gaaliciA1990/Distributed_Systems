@@ -4,7 +4,7 @@ Homework projects for distributes systems class
 </br>
 **Language**: Python3
 ## Lab 1 - Simple Client
-A simple client that connect to a Group Coordinator Daemon (GCD). The GCD responds
+A simple client that connect to a Group Coordinator Daemon (GCD) utilizing TCP/IP connections. The GCD responds
 with a list of potential group members which my client will send a message to. 
 The responses are printed out and then exits the server.
 
@@ -19,3 +19,8 @@ this message to higher process's, and receives a dictionary of all group members
 keyed listen_address with values of corresponding process_ids. An election is 
 started to determine who is the leader. Once the leader is determined, the leader 
 sends a COORDINATOR message stating they are the winner. 
+
+
+## Lab 3 - Arbitrage Detection with Published Quote
+This process listens to currency exchange rates from a price feed and prints our a message whenever there's
+an arbitrage opportunity available. This is utilizing UPD/IP connections. 
