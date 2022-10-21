@@ -1,4 +1,9 @@
 """
+CPSC 5520, Seattle University
+Author: Alicia Garcia
+Version: 1.0
+
+Downloaded from Assignment overview
 Forex Provider
 (c) all rights reserved
 

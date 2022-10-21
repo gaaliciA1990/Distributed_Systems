@@ -22,5 +22,6 @@ sends a COORDINATOR message stating they are the winner.
 
 
 ## Lab 3 - Arbitrage Detection with Published Quote
-This process listens to currency exchange rates from a price feed and prints our a message whenever there's
-an arbitrage opportunity available. This is utilizing UPD/IP connections. 
+The program implements the Bellman-Ford algorithm listens to currency exchange rates 
+from a price feed and prints our a message whenever there's an arbitrage opportunity
+available, utilizing UDC/IP connections.
