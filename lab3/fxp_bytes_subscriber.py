@@ -20,9 +20,11 @@ Published messages: <timestamp, currency 1, currency 2, exchange rate>
     - exchange rate: 64-bit floating point number represented in IEEE 754 binary64 little-endian format.
 """
 import ipaddress
+import math
 import socket
 from array import array
 from datetime import datetime
+from bellman_ford import Arbitrage
 
 PUBLISHER_ADD = ('localhost', 50403)
 BUFF_SZ = 4096
@@ -32,6 +34,7 @@ MICROS_PER_SECOND = 1_000_000
 class Subscriber:
     def __init__(self):
         self.subscr_sock, self.subscr_address = self.create_listening_server()
+        self.timestamp_map = {}  # dictionary to hold the most recent entries for a currency group
 
     def subscribe(self):
         subscriber = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -44,7 +47,8 @@ class Subscriber:
         while True:
             print('\nblocking, waiting to receive message')
             data = self.subscr_sock.recv(BUFF_SZ)
-            self.decode_message(data, len(data))
+            deocded_data = self.decode_message(data, len(data))
+            print(deocded_data)
 
     def decode_message(self, data, size):
         """
@@ -56,6 +60,7 @@ class Subscriber:
         :return: the decoded message in a list
         """
         total_msg = int(size / 32)  # the number of unique 32 byte messages in the data received
+        decoded_msg = []
         print('there are {} messages to decode'.format(total_msg))
 
         # loop through the bytes based on the number of messages that exist
@@ -67,11 +72,18 @@ class Subscriber:
             ts = submessage[0:8]  # set the timestamp (ts) range in bytes
             timestamp = self.deserialize_utcdatetime(ts)
 
-            names = submessage[8:14] # set the currency names range in bytes
-            self.deserialize_currency_name(names)
+            names = submessage[8:14]  # set the currency names range in bytes
+            curr_names = self.deserialize_currency_name(names)
 
-            ex_rate = submessage[14:22]  # set the exchange rate range in bytes
-            self.deserialize_exchange_rate(ex_rate)
+            price = submessage[14:22]  # set the exchange rate range in bytes
+            exchg_rate = self.deserialize_price(price)
+
+            # build our timestamp dictionary to keep track of messages received
+            self.timestamp_map[curr_names] = timestamp
+            # build our list of currencies and their exchange rates
+            decoded_msg.append((curr_names, exchg_rate))
+
+        return decoded_msg
 
     def create_listening_server(self) -> (socket, (str, int)):
         """
@@ -115,11 +127,54 @@ class Subscriber:
         # converts the timestamp to seconds, then datetime based on timestamp method
         timestamp = datetime.fromtimestamp(int(timestamp[0] / MICROS_PER_SECOND))
 
-        print(str(timestamp))
         return timestamp
 
-    def deserialize_currency_name(self, curr_names):
-        pass
+    def deserialize_currency_name(self, curr_names) -> tuple:
+        """
+        This method decodes the currency names and adds them to a tuple
+        :param curr_names: the byte currencies that are being reported
+        :return: tuple of currency str name
+        """
+        # convert the bytes to string into two currency string variables
+        curr_a = curr_names[0:3].decode()
+        curr_b = curr_names[3:6].decode()
 
-    def deserialize_exchange_rate(self, exchange_rate):
-        pass
+        return curr_a, curr_b
+
+    def deserialize_price(self, price) -> float:
+        """
+        This method converts the price exchange rate from bytes to a float
+        :param price: bytes of price for a given message
+        :return: the rate as a float
+        """
+        rate = array('d')
+        rate.frombytes(price)
+        rate = rate[0]
+
+        return rate
+
+    def detect_arbitrage(self):
+        paths = []
+
+        graph = Arbitrage.build_graph()
+
+        for key in graph:
+            path = Arbitrage.bellman_ford(graph, key)
+            if path not in paths and not None:
+                paths.append(path)
+
+        for path in paths:
+            if path is None:
+                print("No opportunity here :(")
+            else:
+                money = 100
+                print(f"Starting with {money} in {path[0]} ")
+
+                for i, value in enumerate(path):
+                    if i + 1 < len(path):
+                        start = path[i]
+                        end = path[i + 1]
+                        rate = math.exp(-graph[start][end])
+                        money *= rate
+                        print(f"{start} to {end} at {rate} = {money}")
+            print("\n")

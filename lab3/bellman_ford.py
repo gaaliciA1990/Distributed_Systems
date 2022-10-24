@@ -3,55 +3,76 @@ CPSC 5520, Seattle University
 Author: Alicia Garcia
 Version: 1.0
 """
+import math
 
 
-class Graph:
-    def __init__(self, vertices):
-        self.vertices = vertices
-        self.graph = []
+class Arbitrage:
+    def __init__(self):
+        self.price_list = []
+        self.graph = {}
 
-    def add_edge(self, currency_a, currency_b, weight):
+    def add_price(self, currency_a, currency_b, price):
         """
         Add a new edge to the graph
         :param currency_a: the currency node that starts the edge
         :param currency_b: the current node that ends the edge
-        :param weight: forex trading market between the currency nodes
-        :return:
+        :param price: forex trading market between the currency nodes
         """
-        self.graph.append([currency_a, currency_b, weight])
+        self.price_list.append([currency_a, currency_b, price])
 
-    def print_solution(self, exchange_rate):
+    def build_graph(self) -> dict:
         """
-        Utility function to print the solution for exchange rate
-        :param exchange_rate: forex trading market between two nodes (Currencies)
-        :return:
+        Build our graph based on the currencies and price we have stored in the list
+        :return: the filled in graph
         """
-        for i in range(self.vertices):
-            print("{0}\t\t{1}".format(i, exchange_rate[i]))
+        for key in self.price_list:
+            conversion_rate = -math.log(float(key[2]))
+            curr_a = key[0]
+            curr_b = key[1]
+            if curr_a != curr_b:
+                if curr_a not in self.graph:
+                    self.graph[curr_a] = {}
+                self.graph[curr_a][curr_b] = float(conversion_rate)
+        return self.graph
 
-    def arbitrage(self, source):
-        """
-        Detects when an arbitrage can be executed by implementing bellman-ford's algorithm
-        to use a negative weight cycle. If the edges (which are the cost of the trade) return
-        a negative cycle, we know we have a profit opportunity, therefore arbitrage.
-        :param source:
-        :return:
-        """
-        # Initialize distances from source to all other vertices as Infinite
-        exchange_rate = [float("Inf")] * self.vertices
-        exchange_rate[source] = 0
+    def initialize(self, graph, source) -> tuple:
+        dest = {}
+        pred = {}
+        for node in graph:
+            dest[node] = float('Inf')  # We start admiting that the rest of nodes are very very far
+            pred[node] = None
+        dest[source] = 0  # For the source we know how to reach
+        return dest, pred
 
-        # The shortest path from the source to any other vertex can have at most vertices -1 edges
-        for _ in range(self.vertices - 1):
-            # update the exchange rate and parent index of the adjacent vertices of the picked vertex
-            # consider only vertices still in the queue
-            for currency_a, currency_b, weight in self.graph:
-                if exchange_rate[currency_a] != float("Inf") and exchange_rate[currency_a] + weight < exchange_rate[
-                    currency_b]:
-                    exchange_rate[currency_b] = exchange_rate[currency_a] + weight
+    def relax(self, curr_a, curr_b, graph, dest, pred):
+        # If the price between curr_a and curr_b is lower than my current price
+        if dest[curr_b] > dest[curr_a] + graph[curr_a][curr_b]:
+            # Record this lower price
+            dest[curr_b] = dest[curr_a] + graph[curr_a][curr_b]
+            pred[curr_b] = curr_a
 
-        # Check the negative weight cycle
-        for currency_a, currency_b, weight in self.graph:
-            if exchange_rate[currency_a] != float("Inf") and exchange_rate[currency_a] + weight < exchange_rate[
-                currency_b]:
-                print("ARBITRAGE:")
+    def retrace_negative_loop(self, pred, start) -> list:
+        arbitrage_loop = [start]
+        next_node = start
+        while True:
+            next_node = pred[next_node]
+            if next_node not in arbitrage_loop:
+                arbitrage_loop.append(next_node)
+            else:
+                arbitrage_loop.append(next_node)
+                arbitrage_loop = arbitrage_loop[arbitrage_loop.index(next_node):]
+                return arbitrage_loop
+
+    def bellman_ford(self, graph, source):
+        dest, pred = self.initialize(graph, source)
+        for i in range(len(graph) - 1):  # Run this until is converges
+            for curr_a in graph:
+                for curr_b in graph[curr_a]:  # For each neighbour of u
+                    self.relax(curr_a, curr_b, graph, dest, pred)  # Relax
+
+        # Step 3: check for negative-weight cycles
+        for curr_a in graph:
+            for curr_b in graph[curr_a]:
+                if dest[curr_b] < dest[curr_a] + graph[curr_a][curr_b]:
+                    return self.retrace_negative_loop(pred, source)
+        return None
