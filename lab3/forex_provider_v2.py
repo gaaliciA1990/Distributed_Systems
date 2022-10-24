@@ -82,7 +82,7 @@ class TestPublisher(object):
         quotes = random.sample(quotes, k=len(quotes) - random.choice((0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 3)))
 
         # occasionally put in an arbitrage
-        if random.random() < 0.95:  # 5% of the time
+        if random.random() > 0.95:  # 5% of the time
             xxx, yyy = sorted(random.sample(list(self.reference), 2))
             xxx_per_usd = self.reference[xxx] if xxx not in REVERSE_QUOTED else 1/self.reference[xxx]
             yyy_per_usd = self.reference[yyy] if yyy not in REVERSE_QUOTED else 1/self.reference[yyy]

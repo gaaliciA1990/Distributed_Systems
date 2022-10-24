@@ -47,10 +47,11 @@ class Subscriber:
         while True:
             print('\nblocking, waiting to receive message')
             data = self.subscr_sock.recv(BUFF_SZ)
-            deocded_data = self.decode_message(data, len(data))
-            print(deocded_data)
+            decoded_data = self.decode_message(data, len(data))
+            print(decoded_data)
+            self.detect_arbitrage(decoded_data)
 
-    def decode_message(self, data, size):
+    def decode_message(self, data, size) -> list:
         """
         Decode the message received by the publisher. This will determine how many messgaes are available
         in the byte data and pass those sections to helper methods for deserialization. Then this method
@@ -153,13 +154,13 @@ class Subscriber:
 
         return rate
 
-    def detect_arbitrage(self):
+    def detect_arbitrage(self, data):
         paths = []
-
-        graph = Arbitrage.build_graph()
+        arbitrage = Arbitrage(data)
+        graph = arbitrage.build_graph()
 
         for key in graph:
-            path = Arbitrage.bellman_ford(graph, key)
+            path = arbitrage.bellman_ford(graph, key)
             if path not in paths and not None:
                 paths.append(path)
 

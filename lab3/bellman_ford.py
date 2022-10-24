@@ -7,18 +7,10 @@ import math
 
 
 class Arbitrage:
-    def __init__(self):
+    def __init__(self, dataList):
         self.price_list = []
         self.graph = {}
-
-    def add_price(self, currency_a, currency_b, price):
-        """
-        Add a new edge to the graph
-        :param currency_a: the currency node that starts the edge
-        :param currency_b: the current node that ends the edge
-        :param price: forex trading market between the currency nodes
-        """
-        self.price_list.append([currency_a, currency_b, price])
+        self.price_list = dataList
 
     def build_graph(self) -> dict:
         """
@@ -26,9 +18,9 @@ class Arbitrage:
         :return: the filled in graph
         """
         for key in self.price_list:
-            conversion_rate = -math.log(float(key[2]))
-            curr_a = key[0]
-            curr_b = key[1]
+            conversion_rate = -math.log(float(key[1]))
+            curr_a = key[0][0]
+            curr_b = key[0][1]
             if curr_a != curr_b:
                 if curr_a not in self.graph:
                     self.graph[curr_a] = {}
@@ -51,7 +43,7 @@ class Arbitrage:
             dest[curr_b] = dest[curr_a] + graph[curr_a][curr_b]
             pred[curr_b] = curr_a
 
-    def retrace_negative_loop(self, pred, start) -> list:
+    def retrace_found_arbitrage(self, pred, start) -> list:
         arbitrage_loop = [start]
         next_node = start
         while True:
@@ -74,5 +66,5 @@ class Arbitrage:
         for curr_a in graph:
             for curr_b in graph[curr_a]:
                 if dest[curr_b] < dest[curr_a] + graph[curr_a][curr_b]:
-                    return self.retrace_negative_loop(pred, source)
+                    return self.retrace_found_arbitrage(pred, source)
         return None
