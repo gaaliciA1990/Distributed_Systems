@@ -2,8 +2,6 @@
 CPSC 5520, Seattle University
 Author: Alicia Garcia
 Version: 1.0
-
-
 """
 
 
@@ -31,11 +29,11 @@ class Graph:
         for i in range(self.vertices):
             print("{0}\t\t{1}".format(i, exchange_rate[i]))
 
-    def bellman_ford(self, source):
+    def arbitrage(self, source):
         """
         Detects when an arbitrage can be executed by implementing bellman-ford's algorithm
         to use a negative weight cycle. If the edges (which are the cost of the trade) return
-        a negative cycle, we know we have a profit.
+        a negative cycle, we know we have a profit opportunity, therefore arbitrage.
         :param source:
         :return:
         """
