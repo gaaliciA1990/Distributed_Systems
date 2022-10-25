@@ -56,7 +56,6 @@ class Subscriber:
                 self.subscr_sock.settimeout(SUBSCRIPTION_ENDED)
                 data = self.subscr_sock.recv(BUFF_SZ)
                 decoded_data = self.decode_message(data, len(data))
-                print(decoded_data)
                 self.detect_arbitrage(decoded_data)
             except socket.timeout:
                 print('No messages received after {} seconds. Closing program due to timeout.'.format(
@@ -65,6 +64,23 @@ class Subscriber:
             except OSError as err:
                 print('Error ocurred: {}'.format(err))
                 sys.exit(1)
+
+    def create_listening_server(self) -> (socket, (str, int)):
+        """
+        Create a listening server to enable the subscription to the publisher
+        :return: the socket and listening address
+        """
+        listener_addr = ('localhost', 0)  # set server address
+
+        print('Starting up on {} on randomly chosen port\n'.format(*listener_addr))
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.bind(listener_addr)  # bind the socket to the publishers address
+        except socket.error as err:
+            print('Failed to bind listening server: {}'.format(err))
+
+        return sock, sock.getsockname()
 
     def decode_message(self, data, size) -> list:
         """
@@ -77,7 +93,6 @@ class Subscriber:
         """
         total_msg = int(size / 32)  # the number of unique 32 byte messages in the data received
         decoded_msg = []
-        print('there are {} messages to decode'.format(total_msg))
 
         # loop through the bytes based on the number of messages that exist
         for i in range(total_msg):
@@ -96,27 +111,12 @@ class Subscriber:
 
             # build our timestamp dictionary to keep track of messages received
             self.timestamp_map[curr_names] = timestamp
-            # build our list of currencies and their exchange rates
-            decoded_msg.append((curr_names, exchg_rate))
+
+            # build our list of currencies and their exchange rates, and their inverses
+            decoded_msg.append((curr_names[0], -math.log(exchg_rate)))
+            decoded_msg.append((curr_names[1], math.log(exchg_rate)))
 
         return decoded_msg
-
-    def create_listening_server(self) -> (socket, (str, int)):
-        """
-        Create a listening server to enable the subscription to the publisher
-        :return: the socket and listening address
-        """
-        listener_addr = ('localhost', 0)  # set server address
-
-        print('Starting up on {} on randomly chosen port\n'.format(*listener_addr))
-
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            sock.bind(listener_addr)  # bind the socket to the publishers address
-        except socket.error as err:
-            print('Failed to bind listening server: {}'.format(err))
-
-        return sock, sock.getsockname()
 
     def serialize_address(self, msg: (str, int)) -> bytes:
         """
@@ -149,13 +149,13 @@ class Subscriber:
         """
         This method decodes the currency names and adds them to a tuple
         :param curr_names: the byte currencies that are being reported
-        :return: tuple of currency str name
+        :return: tuple of currency str name and the inverse
         """
         # convert the bytes to string into two currency string variables
         curr_a = curr_names[0:3].decode()
         curr_b = curr_names[3:6].decode()
 
-        return curr_a, curr_b
+        return (curr_a, curr_b), (curr_b, curr_a)
 
     def deserialize_price(self, price) -> float:
         """
@@ -171,17 +171,16 @@ class Subscriber:
 
     def detect_arbitrage(self, data):
         """
-        This method will call the bellman_ford class to build a graph and add the nodes
-        to the potential arbitrage path and will print the arbitrage path if it exists
-        in paths
+        This method will call the bellman_ford class to build a graph and add the nodes (currencies)
+        to the potential arbitrage path and will print the arbitrage path if it exists in paths
         :param data: decoded message with currencies and prices
         """
         paths = []
         arbitrage = Arbitrage(data)
         graph = arbitrage.build_graph()
 
-        for key in graph:
-            path = arbitrage.bellman_ford(graph, key)
+        for node in graph:
+            path = arbitrage.bellman_ford(graph, node)
             if path is None:
                 continue
             if path not in paths:
@@ -192,8 +191,8 @@ class Subscriber:
                 continue
             else:
                 profit = 100  # set profit to 100 as a marker
-                print('ARBITRAGE FOUND:\n')
-                print('     Starting with {} {}\n'.format(path[0], profit))
+                print('ARBITRAGE FOUND:')
+                print('     Starting with {} {}'.format(path[0], profit))
 
                 for index, value in enumerate(path):
                     if index + 1 < len(path):
@@ -201,4 +200,5 @@ class Subscriber:
                         end = path[index + 1]
                         price = math.exp(-graph[start][end])
                         profit *= price
-                        print('     {} to {} at {} --> {}\n'.format(start, end, price, profit))
+                        print('     {} to {} at {} --> {}'.format(start, end, price, profit))
+        print('\n')

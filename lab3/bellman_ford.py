@@ -18,7 +18,7 @@ class Arbitrage:
         :return: the filled in graph
         """
         for key in self.price_list:
-            conversion_rate = -math.log(float(key[1]))
+            conversion_rate = key[1]
             curr_a = key[0][0]
             curr_b = key[0][1]
             if curr_a != curr_b:
@@ -28,22 +28,45 @@ class Arbitrage:
         return self.graph
 
     def initialize(self, graph, source) -> tuple:
+        """
+        Initializes our graph by setting destiniation edge nodes to infinity.
+        :param graph: the build graph with our currencies
+        :param source: The starting point in the graph
+        :return: the destination node and the predecessor node
+        """
         dest = {}
         pred = {}
         for node in graph:
-            dest[node] = float('Inf')  # We start admiting that the rest of nodes are very very far
+            dest[node] = float('Inf')  # We set our edges to infinity to start
             pred[node] = None
         dest[source] = 0  # For the source we know how to reach
         return dest, pred
 
     def relax(self, curr_a, curr_b, graph, dest, pred):
-        # If the price between curr_a and curr_b is lower than my current price
+        """
+        Set our price to the lowest price, if applicable
+        :param curr_a:
+        :param curr_b:
+        :param graph:
+        :param dest:
+        :param pred:
+        :return:
+        """
+        # Check if our destination is a leaf node
+
+        # If the price between curr_a and curr_b is less than my current price
+        # I want to record the lower price
         if dest[curr_b] > dest[curr_a] + graph[curr_a][curr_b]:
-            # Record this lower price
             dest[curr_b] = dest[curr_a] + graph[curr_a][curr_b]
             pred[curr_b] = curr_a
 
     def retrace_found_arbitrage(self, pred, start) -> list:
+        """
+        For found arbitrage, this method will trace back up the graph and
+        :param pred:
+        :param start:
+        :return:
+        """
         arbitrage_loop = [start]
         next_node = start
         while True:
@@ -56,15 +79,19 @@ class Arbitrage:
                 return arbitrage_loop
 
     def bellman_ford(self, graph, source):
-        dest, pred = self.initialize(graph, source)
-        for i in range(len(graph) - 1):  # Run this until is converges
-            for curr_a in graph:
-                for curr_b in graph[curr_a]:  # For each neighbour of u
-                    self.relax(curr_a, curr_b, graph, dest, pred)  # Relax
+        arbitrage_threshold = 1e-7  # set our tolerance threshold to avoid getting back same amount
 
-        # Step 3: check for negative-weight cycles
+        dest, pred = self.initialize(graph, source)
+        for node in range(len(graph) - 1):
+            for curr_a in graph:
+                for curr_b in graph[curr_a]:  # For each neighbor of curr_a
+                    self.relax(curr_a, curr_b, graph, dest, pred)
+
+        # detect the arbitrage
         for curr_a in graph:
             for curr_b in graph[curr_a]:
-                if dest[curr_b] < dest[curr_a] + graph[curr_a][curr_b]:
+                result = dest[curr_a] + graph[curr_a][curr_b]
+                # is the difference between the value greater than our threshold
+                if result - dest[curr_b] > arbitrage_threshold:
                     return self.retrace_found_arbitrage(pred, source)
         return None
