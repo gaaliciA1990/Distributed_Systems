@@ -2,22 +2,6 @@
 CPSC 5520, Seattle University
 Author: Alicia Garcia
 Version: 1.0
-
-This class will:
-1. subscribe to the forex publishing service,
-2. for each message published, update a graph based on the published prices,
-3. run Bellman-Ford, and
-4. report any arbitrage opportunities.
-
-Using UDP for this, so socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-Connection is never open, so you need to tell the program who to send the message to
-
-Published messages: <timestamp, currency 1, currency 2, exchange rate>
-    - timestamp:  64-bit integer number of microseconds that have passed since 00:00:00 UTC on 1 January 1970 (excluding
-    leap seconds). Sent in big-endian network format.
-    - currency names: three-character ISO codes ('USD', 'GBP', 'EUR', etc.) transmitted in 8-bit ASCII from left to
-    right.
-    - exchange rate: 64-bit floating point number represented in IEEE 754 binary64 little-endian format.
 """
 import ipaddress
 import math
@@ -30,13 +14,23 @@ from bellman_ford import Arbitrage
 PUBLISHER_ADD = ('localhost', 50403)
 BUFF_SZ = 4096
 MICROS_PER_SECOND = 1_000_000
-SUBSCRIPTION_ENDED = 3  # If no msg received in 1 min time
+SUBSCRIPTION_ENDED = 5  # If no msg received in 1 min time
 
 
+# noinspection SpellCheckingInspection
 class Subscriber:
+    """
+    This class will:
+        1. subscribe to the forex publishing service,
+        2. for each message published, update a graph based on the published prices,
+        3. run Bellman-Ford, and
+        4. report any arbitrage opportunities.
+    """
+
     def __init__(self):
         self.subscr_sock, self.subscr_address = self.create_listening_server()
         self.timestamp_map = {}  # dictionary to hold the most recent entries for a currency group
+        self.currency_map = {}  # dictionary to hold the currencies and their rates
 
     def subscribe(self):
         """
@@ -46,17 +40,17 @@ class Subscriber:
         """
         subscriber = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        print('sending {!r} (even if no-one is listening)\n'.format(self.subscr_address))
+        print('sending {!r} (even if no-one is listening)'.format(self.subscr_address))
         byte_msg = self.serialize_address(self.subscr_address)
         subscriber.sendto(byte_msg, PUBLISHER_ADD)
 
         while True:
             try:
-                print('\nblocking, waiting to receive message')
                 self.subscr_sock.settimeout(SUBSCRIPTION_ENDED)
                 data = self.subscr_sock.recv(BUFF_SZ)
-                decoded_data = self.decode_message(data, len(data))
-                self.detect_arbitrage(decoded_data)
+                new_msgs = self.deserialize_received_message(data, len(data))
+                updated_data = self.update_data(new_msgs)
+                self.detect_arbitrage(updated_data)
             except socket.timeout:
                 print('No messages received after {} seconds. Closing program due to timeout.'.format(
                     SUBSCRIPTION_ENDED))
@@ -82,7 +76,7 @@ class Subscriber:
 
         return sock, sock.getsockname()
 
-    def decode_message(self, data, size) -> list:
+    def deserialize_received_message(self, data, size) -> list:
         """
         Decode the message received by the publisher. This will determine how many messgaes are available
         in the byte data and pass those sections to helper methods for deserialization. Then this method
@@ -100,21 +94,28 @@ class Subscriber:
             end = (i + 1) * 32
             submessage = data[start:end]
 
+            # decode the message piece by piece starting with timestamp
             ts = submessage[0:8]  # set the timestamp (ts) range in bytes
             timestamp = self.deserialize_utcdatetime(ts)
-
+            # decode currency names
             names = submessage[8:14]  # set the currency names range in bytes
             curr_names = self.deserialize_currency_name(names)
-
+            # decode rates
             price = submessage[14:22]  # set the exchange rate range in bytes
             exchg_rate = self.deserialize_price(price)
 
-            # build our timestamp dictionary to keep track of messages received
-            self.timestamp_map[curr_names] = timestamp
+            # display the decoded message
+            print('{} {} {} {}'.format(timestamp, curr_names[0][0], curr_names[0][1], exchg_rate))
 
-            # build our list of currencies and their exchange rates, and their inverses
-            decoded_msg.append((curr_names[0], -math.log(exchg_rate)))
-            decoded_msg.append((curr_names[1], math.log(exchg_rate)))
+            # we only want to add and return the messages that are newest, so we check the timestamp
+            if curr_names not in self.timestamp_map or timestamp > self.timestamp_map[curr_names]:
+                # build our timestamp dictionary to keep track of messages received
+                self.timestamp_map[curr_names] = timestamp
+                # build our list of currencies and their exchange rates, and their inverses
+                decoded_msg.append((curr_names[0], -math.log(exchg_rate)))
+                decoded_msg.append((curr_names[1], math.log(exchg_rate)))
+            else:
+                print('Ignoring out-of-sequence message')
 
         return decoded_msg
 
@@ -169,6 +170,26 @@ class Subscriber:
 
         return rate
 
+    def update_data(self, new_msgs) -> list:
+        """
+        This method will update our data to feed to the graph, so we are always working
+        with the most recent rates for each exchange
+        :param new_msgs: list of the new received messgaes
+        :return: list of updated messages, if applicable. otherwise, not change occurs
+        """
+        updated_list = []
+
+        for msg in new_msgs:
+            key = msg[0]  # currencies in the list
+            value = msg[1]  # the rate/price in our list
+            self.currency_map[key] = value
+
+        for key in self.currency_map:
+            value = self.currency_map[key]
+            updated_list.append((key, value))
+
+        return updated_list
+
     def detect_arbitrage(self, data):
         """
         This method will call the bellman_ford class to build a graph and add the nodes (currencies)
@@ -191,7 +212,7 @@ class Subscriber:
                 continue
             else:
                 profit = 100  # set profit to 100 as a marker
-                print('ARBITRAGE FOUND:')
+                print('\nARBITRAGE FOUND:')
                 print('     Starting with {} {}'.format(path[0], profit))
 
                 for index, value in enumerate(path):
@@ -201,4 +222,3 @@ class Subscriber:
                         price = math.exp(-graph[start][end])
                         profit *= price
                         print('     {} to {} at {} --> {}'.format(start, end, price, profit))
-        print('\n')

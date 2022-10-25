@@ -4,6 +4,7 @@ Author: Alicia Garcia
 Version: 1.0
 """
 import math
+import sys
 
 
 class Arbitrage:
@@ -52,8 +53,6 @@ class Arbitrage:
         :param pred:
         :return:
         """
-        # Check if our destination is a leaf node
-
         # If the price between curr_a and curr_b is less than my current price
         # I want to record the lower price
         if dest[curr_b] > dest[curr_a] + graph[curr_a][curr_b]:
@@ -62,7 +61,7 @@ class Arbitrage:
 
     def retrace_found_arbitrage(self, pred, start) -> list:
         """
-        For found arbitrage, this method will trace back up the graph and
+        For found arbitrage, this method will trace back up the graph and return the path
         :param pred:
         :param start:
         :return:
@@ -70,17 +69,20 @@ class Arbitrage:
         arbitrage_loop = [start]
         next_node = start
         while True:
-            next_node = pred[next_node]
-            if next_node not in arbitrage_loop:
-                arbitrage_loop.append(next_node)
-            else:
-                arbitrage_loop.append(next_node)
-                arbitrage_loop = arbitrage_loop[arbitrage_loop.index(next_node):]
-                return arbitrage_loop
+            try:
+                next_node = pred[next_node]
+                if next_node not in arbitrage_loop:
+                    arbitrage_loop.append(next_node)
+                else:
+                    arbitrage_loop.append(next_node)
+                    arbitrage_loop = arbitrage_loop[arbitrage_loop.index(next_node):]
+                    return arbitrage_loop
+            except KeyError as kerr:
+                print('Key Error encountered: {}'.format(kerr))
+                sys.exit(1)
+
 
     def bellman_ford(self, graph, source):
-        arbitrage_threshold = 1e-7  # set our tolerance threshold to avoid getting back same amount
-
         dest, pred = self.initialize(graph, source)
         for node in range(len(graph) - 1):
             for curr_a in graph:
@@ -92,6 +94,6 @@ class Arbitrage:
             for curr_b in graph[curr_a]:
                 result = dest[curr_a] + graph[curr_a][curr_b]
                 # is the difference between the value greater than our threshold
-                if result - dest[curr_b] > arbitrage_threshold:
+                if dest[curr_b] > result:
                     return self.retrace_found_arbitrage(pred, source)
         return None
