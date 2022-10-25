@@ -49,7 +49,7 @@ class Subscriber:
                 self.subscr_sock.settimeout(SUBSCRIPTION_ENDED)
                 data = self.subscr_sock.recv(BUFF_SZ)
                 new_msgs = self.deserialize_received_message(data, len(data))
-                updated_data = self.update_data(new_msgs)
+                updated_data = self.update_exchange_data(new_msgs)
                 self.detect_arbitrage(updated_data)
             except socket.timeout:
                 print('No messages received after {} seconds. Closing program due to timeout.'.format(
@@ -170,7 +170,7 @@ class Subscriber:
 
         return rate
 
-    def update_data(self, new_msgs) -> list:
+    def update_exchange_data(self, new_msgs) -> list:
         """
         This method will update our data to feed to the graph, so we are always working
         with the most recent rates for each exchange
@@ -178,12 +178,22 @@ class Subscriber:
         :return: list of updated messages, if applicable. otherwise, not change occurs
         """
         updated_list = []
+        stale_time = 1.5
 
+        # add new messages to our currency map
         for msg in new_msgs:
             key = msg[0]  # currencies in the list
             value = msg[1]  # the rate/price in our list
             self.currency_map[key] = value
 
+        # check for stale data
+        for ts in self.timestamp_map:
+            if (self.timestamp_map[ts] - datetime.now()).total_seconds() > stale_time:
+                print('Removing stale data')
+                currency_key = ts
+                del self.currency_map[currency_key]
+
+        # add updated data to our list to return
         for key in self.currency_map:
             value = self.currency_map[key]
             updated_list.append((key, value))
@@ -212,7 +222,7 @@ class Subscriber:
                 continue
             else:
                 profit = 100  # set profit to 100 as a marker
-                print('\nARBITRAGE FOUND:')
+                print('ARBITRAGE FOUND:')
                 print('     Starting with {} {}'.format(path[0], profit))
 
                 for index, value in enumerate(path):
