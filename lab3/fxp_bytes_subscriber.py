@@ -22,6 +22,7 @@ Published messages: <timestamp, currency 1, currency 2, exchange rate>
 import ipaddress
 import math
 import socket
+import sys
 from array import array
 from datetime import datetime
 from bellman_ford import Arbitrage
@@ -29,6 +30,7 @@ from bellman_ford import Arbitrage
 PUBLISHER_ADD = ('localhost', 50403)
 BUFF_SZ = 4096
 MICROS_PER_SECOND = 1_000_000
+SUBSCRIPTION_ENDED = 3  # If no msg received in 1 min time
 
 
 class Subscriber:
@@ -37,19 +39,32 @@ class Subscriber:
         self.timestamp_map = {}  # dictionary to hold the most recent entries for a currency group
 
     def subscribe(self):
+        """
+        This method is called to initiate the scubscription, listen on our
+        listening server for incoming message, and run the arbitrage detection.
+        If the timeout is reached, we exit the program.
+        """
         subscriber = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        print(subscriber)
 
         print('sending {!r} (even if no-one is listening)\n'.format(self.subscr_address))
         byte_msg = self.serialize_address(self.subscr_address)
         subscriber.sendto(byte_msg, PUBLISHER_ADD)
 
         while True:
-            print('\nblocking, waiting to receive message')
-            data = self.subscr_sock.recv(BUFF_SZ)
-            decoded_data = self.decode_message(data, len(data))
-            print(decoded_data)
-            self.detect_arbitrage(decoded_data)
+            try:
+                print('\nblocking, waiting to receive message')
+                self.subscr_sock.settimeout(SUBSCRIPTION_ENDED)
+                data = self.subscr_sock.recv(BUFF_SZ)
+                decoded_data = self.decode_message(data, len(data))
+                print(decoded_data)
+                self.detect_arbitrage(decoded_data)
+            except socket.timeout:
+                print('No messages received after {} seconds. Closing program due to timeout.'.format(
+                    SUBSCRIPTION_ENDED))
+                sys.exit(0)  # break from the while loop to end program
+            except OSError as err:
+                print('Error ocurred: {}'.format(err))
+                sys.exit(1)
 
     def decode_message(self, data, size) -> list:
         """
@@ -155,27 +170,35 @@ class Subscriber:
         return rate
 
     def detect_arbitrage(self, data):
+        """
+        This method will call the bellman_ford class to build a graph and add the nodes
+        to the potential arbitrage path and will print the arbitrage path if it exists
+        in paths
+        :param data: decoded message with currencies and prices
+        """
         paths = []
         arbitrage = Arbitrage(data)
         graph = arbitrage.build_graph()
 
         for key in graph:
             path = arbitrage.bellman_ford(graph, key)
-            if path not in paths and not None:
+            if path is None:
+                continue
+            if path not in paths:
                 paths.append(path)
 
         for path in paths:
             if path is None:
-                print("No opportunity here :(")
+                continue
             else:
-                money = 100
-                print(f"Starting with {money} in {path[0]} ")
+                profit = 100  # set profit to 100 as a marker
+                print('ARBITRAGE FOUND:\n')
+                print('     Starting with {} {}\n'.format(path[0], profit))
 
-                for i, value in enumerate(path):
-                    if i + 1 < len(path):
-                        start = path[i]
-                        end = path[i + 1]
-                        rate = math.exp(-graph[start][end])
-                        money *= rate
-                        print(f"{start} to {end} at {rate} = {money}")
-            print("\n")
+                for index, value in enumerate(path):
+                    if index + 1 < len(path):
+                        start = path[index]
+                        end = path[index + 1]
+                        price = math.exp(-graph[start][end])
+                        profit *= price
+                        print('     {} to {} at {} --> {}\n'.format(start, end, price, profit))
