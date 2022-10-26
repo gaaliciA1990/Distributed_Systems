@@ -43,6 +43,32 @@ class Arbitrage:
         dist[source] = 0  # For the source we know how to reach, set dist to 0
         return dist, pred
 
+    def bellman_ford(self, graph, source, tolerance):
+        """
+        This is supposed to run the bellman ford algorithm, modified to detect market arbitrage.
+        The edges are relaxs and the negative cycle detection is called to determine if one
+        exists for the updated graph
+        :param graph: our graph holding the currencies nodes and price edges/weights
+        :param source: the starting point for determining arbitrage in the graph
+        :param tolerance: the threshold value for determine if we actually have a profit
+        :return: the path of the potential arbitrage, else None
+        """
+        dist, pred = self.initialize(graph, source)
+
+        for node in range(len(graph) - 1):
+            for start_currency in graph:
+                for end_currency in graph[start_currency]:
+                    self.relax(start_currency, end_currency, graph, dist, pred, tolerance)
+
+        # detect the arbitrage
+        for start_currency in graph:
+            for end_currency in graph[start_currency]:
+                price_wt = graph[start_currency][end_currency]
+                if dist[start_currency] is not float('Inf') and dist[end_currency] > dist[start_currency] + price_wt \
+                        + tolerance:
+                    return self.negative_cycle_detection(pred, source)
+        return None
+
     def relax(self, start, neighbor, graph, dist, pred, tolerance):
         """
         Update the distance value by relaxing the edges
@@ -63,9 +89,9 @@ class Arbitrage:
     def negative_cycle_detection(self, pred, start) -> list:
         """
         For found arbitrage, this method will trace back up the graph and return the path
-        :param pred:
-        :param start:
-        :return:
+        :param pred: predecessor node
+        :param start: starting node for arbitrage detection
+        :return: the loop for the arbitrage
         """
         arbitrage_loop = [start]
         next_node = start
@@ -81,20 +107,3 @@ class Arbitrage:
             except KeyError as kerr:
                 print('Key Error encountered: {}'.format(kerr))
                 sys.exit(1)
-
-    def bellman_ford(self, graph, source, tolerance):
-        dist, pred = self.initialize(graph, source)
-
-        for node in range(len(graph) - 1):
-            for start_currency in graph:
-                for end_currency in graph[start_currency]:
-                    self.relax(start_currency, end_currency, graph, dist, pred, tolerance)
-
-        # detect the arbitrage
-        for start_currency in graph:
-            for end_currency in graph[start_currency]:
-                price_wt = graph[start_currency][end_currency]
-                if dist[start_currency] is not float('Inf') and dist[end_currency] > dist[
-                    start_currency] + price_wt + tolerance:
-                    return self.negative_cycle_detection(pred, source)
-        return None

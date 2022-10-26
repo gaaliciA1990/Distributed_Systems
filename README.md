@@ -24,4 +24,6 @@ sends a COORDINATOR message stating they are the winner.
 ## Lab 3 - Arbitrage Detection with Published Quote
 The program implements the Bellman-Ford algorithm listens to currency exchange rates 
 from a price feed and prints our a message whenever there's an arbitrage opportunity
-available, utilizing UDC/IP connections.
+available, utilizing UDC/IP connections. As of right now, the arbitrage appears to be 
+detected in the reverse (showing losses instead of profit). I have exhausted all brain power
+to fix it, but have not been able to identify what is wrong in my code.

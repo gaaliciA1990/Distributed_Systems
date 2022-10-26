@@ -17,7 +17,6 @@ SUBSCRIPTION_ENDED = 60  # If no msg received in 1 min time
 TOLERANCE = 1e-8
 
 
-# noinspection SpellCheckingInspection
 class Subscriber:
     """
     This class will:
@@ -100,7 +99,7 @@ class Subscriber:
             timestamp = self.deserialize_utcdatetime(ts)
             # decode currency names
             names = submessage[8:14]  # set the currency names range in bytes
-            curr_names = self.deserialize_currency_name(names)
+            curr_names = self.unmarshall_name(names)
             # decode rates
             price = submessage[14:22]  # set the exchange rate range in bytes
             exchg_rate = self.deserialize_price(price)
@@ -147,7 +146,7 @@ class Subscriber:
 
         return timestamp
 
-    def deserialize_currency_name(self, curr_names) -> tuple:
+    def unmarshall_name(self, curr_names) -> tuple:
         """
         This method decodes the currency names and adds them to a tuple
         :param curr_names: the byte currencies that are being reported
