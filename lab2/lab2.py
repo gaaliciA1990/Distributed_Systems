@@ -243,7 +243,8 @@ class BullyClient:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as member_socket:
                 # Call the helper function to contact server and check if false
                 self.connection_states[member_socket] = State.SEND_ELECTION
-                if self.contact_server(member_socket, self.member_connections[member_pid][0], self.member_connections[member_pid][1], True) is False:
+                if self.contact_server(member_socket, self.member_connections[member_pid][0],
+                                       self.member_connections[member_pid][1], True) is False:
                     self.set_quiescent(member_socket)
                 try:
                     self.set_state(State.SEND_ELECTION, member_socket)

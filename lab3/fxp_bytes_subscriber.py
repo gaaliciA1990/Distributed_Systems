@@ -11,10 +11,10 @@ from array import array
 from datetime import datetime
 from bellman_ford import Arbitrage
 
-PUBLISHER_ADD = ('localhost', 50403)
 BUFF_SZ = 4096
 MICROS_PER_SECOND = 1_000_000
-SUBSCRIPTION_ENDED = 5  # If no msg received in 1 min time
+SUBSCRIPTION_ENDED = 60  # If no msg received in 1 min time
+TOLERANCE = 1e-8
 
 
 # noinspection SpellCheckingInspection
@@ -27,10 +27,11 @@ class Subscriber:
         4. report any arbitrage opportunities.
     """
 
-    def __init__(self):
+    def __init__(self, host, port):
         self.subscr_sock, self.subscr_address = self.create_listening_server()
         self.timestamp_map = {}  # dictionary to hold the most recent entries for a currency group
         self.currency_map = {}  # dictionary to hold the currencies and their rates
+        self.publisher_address = (host, port)
 
     def subscribe(self):
         """
@@ -42,7 +43,7 @@ class Subscriber:
 
         print('sending {!r} (even if no-one is listening)'.format(self.subscr_address))
         byte_msg = self.serialize_address(self.subscr_address)
-        subscriber.sendto(byte_msg, PUBLISHER_ADD)
+        subscriber.sendto(byte_msg, self.publisher_address)
 
         while True:
             try:
@@ -211,7 +212,7 @@ class Subscriber:
         graph = arbitrage.build_graph()
 
         for node in graph:
-            path = arbitrage.bellman_ford(graph, node)
+            path = arbitrage.bellman_ford(graph, node, TOLERANCE)
             if path is None:
                 continue
             if path not in paths:
@@ -231,4 +232,4 @@ class Subscriber:
                         end = path[index + 1]
                         price = math.exp(-graph[start][end])
                         profit *= price
-                        print('     {} to {} at {} --> {}'.format(start, end, price, profit))
+                        print('     exchange {} for {} at {} --> {}'.format(start, end, price, profit))
