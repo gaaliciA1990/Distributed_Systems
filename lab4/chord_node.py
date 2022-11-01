@@ -19,19 +19,19 @@ class ModRange(object):
     """
     Range-like object that wraps around 0 at some divisor using modulo arithmetic.
 
-    >>> mr = ModRange(1, 4, 100)
-    >>> mr
+    >> mr = ModRange(1, 4, 100)
+    >> mr
     <mrange [1,4)%100>
-    >>> 1 in mr and 2 in mr and 4 not in mr
+    >> 1 in mr and 2 in mr and 4 not in mr
     True
-    >>> [i for i in mr]
+    >> [i for i in mr]
     [1, 2, 3]
-    >>> mr = ModRange(97, 2, 100)
-    >>> 0 in mr and 99 in mr and 2 not in mr and 97 in mr
+    >> mr = ModRange(97, 2, 100)
+    >> 0 in mr and 99 in mr and 2 not in mr and 97 in mr
     True
-    >>> [i for i in mr]
+    >> [i for i in mr]
     [97, 98, 99, 0, 1]
-    >>> [i for i in ModRange(0, 0, 5)]
+    >> [i for i in ModRange(0, 0, 5)]
     [0, 1, 2, 3, 4]
     """
 
