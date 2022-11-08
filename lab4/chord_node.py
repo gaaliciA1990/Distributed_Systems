@@ -318,7 +318,7 @@ class ChordNode(object):
             return self.add_key(val1, val2)
         # request to get data on a node
         elif request == QueryMessage.GET_DATA.value:
-            return self.get_member_data(val1)
+            return self.get_key_data(val1)
         # request to update key(s)
         elif request == QueryMessage.UPDATE_KEYS.value:
             return self.update_keys()
@@ -371,7 +371,7 @@ class ChordNode(object):
         else:
             for index in range(1, M + 1):
                 self.finger[index].node = self.node
-            self.pred = self.node
+            self.predecessor(self.node)
 
         self.member = True
         print('New connection established at {} with node ID [{}]'.format(datetime.now().time(), self.node))
@@ -383,7 +383,7 @@ class ChordNode(object):
         Initialize nodes finger table of successor nodes based on connected_node
         """
         self.successor = self.call_rpc(self.connected_node, QueryMessage.FIND_SUCC, self.finger[1].start)
-        self.pred = self.call_rpc(self.successor, QueryMessage.GET_PRED)
+        self.predecessor(self.call_rpc(self.successor, QueryMessage.GET_PRED))
         self.call_rpc(self.successor, QueryMessage.SET_PRED, self.node)
 
         for index in range(1, M):
@@ -426,14 +426,59 @@ class ChordNode(object):
                 return self.finger[index].node
             return self.node
 
-    def update_finger_table(self, val1, val2):
-        pass
+    def update_finger_table(self, val, index):
+        """
+        Update the finger table is val is at index of the table
+        :param val: Value to update the finger table with
+        :param index: Index to check in the table
+        """
+        if self.finger[index].start != self.finger[index].node and val in ModRange(self.finger[index].start,
+                                                                                   self.finger[index].node, NODES):
+            print('Updating finger table at {}'.format(datetime.now().time()))
+            self.finger[index].node = val
+            pred = self.predecessor
+            self.call_rpc(pred, QueryMessage.UFT, val, index)
+            self.print_finger_table()
+        else:
+            print('No action taken on finger table for {}'.format(self.node))
 
-    def add_key(self, val1, val2):
-        pass
+    def add_key(self, key, val):
+        """
+        Add new key to the key:value map.
+        :param key: The key in the map
+        :param val: the data associated with the key
+        :return:
+        """
+        if key >= NODES:
+            raise ValueError('Error: Max ID should be {}'.format(NODES - 1))
+        # if key is mine, add the value to our key list
+        if key in ModRange(self.predecessor + 1, self.node + 1, NODES):
+            self.node_keys[key] = val
+            print('Key {} added at {}'.format(key, datetime.now().time()))
+        else:
+            # if key is not mine, find responsible successor and add to their list
+            node_prime = self.find_successor(key)
+            return self.call_rpc(node_prime, QueryMessage.ADD_KEY, val)
 
-    def get_member_data(self, val1):
-        pass
+    def get_key_data(self, key):
+        """
+        Returns the value associated with key
+        :param key: Key to lookup
+        :return: value associated with key
+        """
+        if key >= NODES:
+            raise ValueError('Error: Max ID should be {}'.format(NODES - 1))
+        # If key is mine, return the value
+        if key in ModRange(self.predecessor + 1, self.node + 1, NODES):
+            print('Obtained key [{}] at {}'.format(key, datetime.now().time()))
+            if key in self.node_keys:
+                return self.node_keys[key]
+            else:
+                return None
+        else:
+            # key is not mine, find responsible successor
+            node_prime = self.find_successor(key)
+            return self.call_rpc(node_prime, QueryMessage.GET_DATA, key)
 
     def update_members(self):
         """
@@ -457,8 +502,8 @@ class ChordNode(object):
         self.lock.acquire()
         removed_keys = []
 
-        for key,value in self.node_keys.items():
-            if key not in ModRange(self.pred + 1, self.node + 1, NODES):
+        for key, value in self.node_keys.items():
+            if key not in ModRange(self.predecessor + 1, self.node + 1, NODES):
                 removed_keys.append(key)
                 node_prime = self.find_successor(key)
                 self.call_rpc(node_prime, QueryMessage.ADD_KEY, key, value)
@@ -474,7 +519,12 @@ class ChordNode(object):
         Remove keys from key list
         :param removed_keys: list of keys to remove
         """
-        
+        self.lock.acquire()
+
+        for key in removed_keys:
+            del self.node_keys[key]
+
+        self.lock.release()
 
     def print_node_info(self):
         """
@@ -486,7 +536,7 @@ class ChordNode(object):
                'Successor node: {}\n' \
                'Keys: {}\n' \
                'Finger Table: {}\n' \
-               '**************\n'.format(self.node, self.pred, self.successor, self.print_key_list(),
+               '**************\n'.format(self.node, self.predecessor, self.successor, self.print_key_list(),
                                          self.print_finger_table())
 
     def print_key_list(self) -> str:
