@@ -449,7 +449,6 @@ class ChordNode(object):
         """
         Update the key list for a node. Transfer any keys to new successor from the predecessor,
         and removes the transferred keys from the list
-        :return:
         """
         if not self.node_keys:
             print('not action taken')
@@ -464,18 +463,31 @@ class ChordNode(object):
                 node_prime = self.find_successor(key)
                 self.call_rpc(node_prime, QueryMessage.ADD_KEY, key, value)
                 print('Key {} transferred to node ID [{}] at {}'.format(key, node_prime, datetime.now().time()))
+        self.lock.release()
+
+        self.remove_keys(removed_keys)
+        if self.node_keys:
+            print('Node keys: {}'.format(self.print_key_list()))
+
+    def remove_keys(self, removed_keys):
+        """
+        Remove keys from key list
+        :param removed_keys: list of keys to remove
+        """
+        
 
     def print_node_info(self):
         """
         Helper function to print data for node
         """
-        print(''.join(['\n******** Node Informaiton ********\n',
-                       'node ID: {}\n'.format(self.node),
-                       'predecessor: {}\n'.format(self.pred),
-                       'successor: {}\n'.format(self.successor),
-                       'keys: {}\n'.format(self.print_key_list()),
-                       '\nfinger table:\n', self.print_finger_table(),
-                       '\n**********************\n']))
+        return '\n******* Member Information *******\n' \
+               "Node ID: {}\n" \
+               'Predecessor node: {}\n' \
+               'Successor node: {}\n' \
+               'Keys: {}\n' \
+               'Finger Table: {}\n' \
+               '**************\n'.format(self.node, self.pred, self.successor, self.print_key_list(),
+                                         self.print_finger_table())
 
     def print_key_list(self) -> str:
         """
@@ -547,18 +559,3 @@ class ChordNode(object):
         hashed_data = hashlib.sha1(hashed_data).digest()
 
         return int.from_bytes(hashed_data, byteorder='big')
-
-
-'''def print_member_data(self) -> str:
-        """
-        Help method to displaying connection member data
-        :return: string of member data
-        """
-        return '\n******* Member Data *******\n' \
-               "Node ID: {}\n" \
-               'Predecessor node: {}\n' \
-               'Successor node: {}\n' \
-               'Keys: {}\n' \
-               'Finger Table: {}\n' \
-               '**************\n'.format(self.node, self.predecessor, self.successor, self.print_key_list(),
-                                         self.print_finger_table())'''
