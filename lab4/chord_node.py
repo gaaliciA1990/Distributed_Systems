@@ -13,9 +13,7 @@ import socket
 import sys
 from datetime import datetime
 from enum import Enum
-from threading import Thread
-
-from referencelab4 import RPC
+from threading import Thread, Lock
 
 M = hashlib.sha1().digest_size * 8
 NODES = 2 ** M
@@ -26,6 +24,8 @@ MAX_PORT = 2 ** 16
 HOST = 'localhost'
 TIMEOUT = 1.5
 TABLE_IDX = M - 25 if M - 25 > 0 else 1
+FALSE_PORT_LIST = []
+NODE_ADDRESS_MAP = {}
 
 
 class QueryMessage(Enum):
@@ -42,6 +42,7 @@ class QueryMessage(Enum):
     ADD_KEY = 'add_key'
     GET_DATA = 'get_data'
     UPDATE_KEYS = 'update_keys'
+
 
 class ModRange(object):
     """
@@ -194,14 +195,20 @@ class FingerEntry(object):
 
 
 class ChordNode(object):
-    def __init__(self, node):
-        self.node = node
-        self.finger = [None] + [FingerEntry(node, k) for k in range(1, M + 1)]  # indexing starts at 1
+
+    def __init__(self, port, known_port=None):
+        self.node = self.lookup_node((HOST, port))
+        self.finger = [None] + [FingerEntry(self.node, k) for k in range(1, M + 1)]  # indexing starts at 1
         self.pred = None
-        self.keys = {}
+        self.node_keys = {}
         self.port = 6000
         self.member = False  # initial state of membership for connections is set to false when initialized
+        self.lock = Lock()
+        # When a new connection is made, a known port is passed to determine who the new connection knows in the Sys
+        self.connected_node = ChordNode.lookup_node((HOST, known_port)) if known_port else None
+
         self.listener_server = self.initiate_listening_server()
+        Thread(target=self.start_server()).start()
 
     @property
     def successor(self):
@@ -272,18 +279,9 @@ class ChordNode(object):
         client_rpc = client_sock.recv(BUF_SZ)
         request, val1, val2 = pickle.loads(client_rpc)
 
-        print('Request received at {} with message: {}'.format(datetime.now(), request))
+        print('Request received at {} with message: {}'.format(datetime.now().time(), request))
         result = self.send_request(request, val1, val2)
         client_sock.sendall(pickle.dumps(result))
-
-    def find_successor(self, value_id):
-        """
-        Ask this node to find id's successor = successor(predecessor(id))
-        :param value_id: Value associated with the query key
-        :return:
-        """
-        node_prime = self.find_predecessor(value_id)
-        return self.call_rpc(node_prime, QueryMessage.SUCC)
 
     def send_request(self, request, val1, val2):
         """
@@ -325,30 +323,89 @@ class ChordNode(object):
         elif request == QueryMessage.UPDATE_KEYS.value:
             return self.update_keys()
         else:
-            print('\nQuery failed at {}: no such query exists\n'.format(datetime.now()))
+            print('\nQuery failed at {}: no such query exists\n'.format(datetime.now().time()))
             return None
 
-    def call_rpc(self, node_prime, query: RPC, val1=None, val2=None):
+    def call_rpc(self, node_prime, query: QueryMessage, val1=None, val2=None):
         """
         Makes an RPC call to a given method based on the query type. If no args (val1 and val2) are present
         we assume no arguments are taken.
         :param node_prime: the node to check against
-        :param query: the query to make (success, predecessor, etc)
+        :param query: the query to make (success, predecessor, etc) dictating which method to call
         :param val1: typically the value_id to search for, if present
         :param val2: typically node data, if present
-        :return: value of the method
+        :return: value of the called method
         """
         query_req = query.value
 
+        # if the node is already self, conduct the query
         if node_prime == self.node:
             return self.send_request(query_req, val1, val2)
-        # TODO Finish section
 
+        # When the node is not self, we need to figure our who to contact and send the query to
+        for _ in range(50):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as prime_sock:
+                node_prime_add = self.lookup_address(node_prime)
+                prime_sock.settimeout(TIMEOUT)
+
+                try:
+                    prime_sock.connect(node_prime_add)
+                    query_data = pickle.dumps((query, val1, val2))
+                    prime_sock.sendall(query_data)
+                    return pickle.loads(prime_sock.recv(BUF_SZ))
+                except Exception as e:
+                    print('Connection to node ID {} failed. Thread may be busy. Connection aborted at {}'.format(
+                        node_prime, datetime.now().time()))
+
+    def join_network(self):
+        """
+        New connections are added to the Chord netword, or create a new one. If a network
+        exists, we require a connected_node to be known, so we can set up the new finger table
+        :return:
+        """
+        if self.connected_node is not None:
+            self.init_finger_table()
+            self.update_members()
+            # reorganize keys from pred since new connection is now the successor of their pred
+            self.call_rpc(self.successor, QueryMessage.UPDATE_KEYS)
+        else:
+            for index in range(1, M + 1):
+                self.finger[index].node = self.node
+            self.pred = self.node
+
+        self.member = True
+        print('New connection established at {} with node ID [{}]'.format(datetime.now().time(), self.node))
+        print('New finger table created at {}'.format((datetime.now().time())))
+        self.print_node_info()
+
+    def init_finger_table(self):
+        """
+        Initialize nodes finger table of successor nodes based on connected_node
+        """
+        self.successor = self.call_rpc(self.connected_node, QueryMessage.FIND_SUCC, self.finger[1].start)
+        self.pred = self.call_rpc(self.successor, QueryMessage.GET_PRED)
+        self.call_rpc(self.successor, QueryMessage.SET_PRED, self.node)
+
+        for index in range(1, M):
+            if self.finger[index + 1].start in ModRange(self.node, self.finger[index].node, NODES):
+                self.finger[index + 1].node = self.finger[index].node
+            else:
+                self.finger[index + 1].node = self.call_rpc(self.connected_node, QueryMessage.FIND_SUCC, self.finger[
+                    index + 1].start)
+
+    def find_successor(self, value_id):
+        """
+        Ask this node to find id's successor = successor(predecessor(id))
+        :param value_id: Value associated with the query key (hashed id)
+        :return: successor node for the value ID
+        """
+        node_prime = self.find_predecessor(value_id)
+        return self.call_rpc(node_prime, QueryMessage.SUCC)
 
     def find_predecessor(self, value_id) -> int:
         """
         Finds the predecessor of the M-bit value id and return the node
-        :param value_id: Value associated with the query key
+        :param value_id: Value associated with the query key (hashed id)
         :return: the predecessor node
         """
         node_prime = self.node
@@ -358,22 +415,16 @@ class ChordNode(object):
         return node_prime
 
     def closest_preceding_finger(self, value_id) -> int:
-        pass
-
-    def print_key_list(self) -> str:
         """
-        Helper method to print the list of keys
-        :return: string message of keys
+        Finds the node in the finger table to handle the query and returns that node to search
+        for the query
+        :param value_id: Value associated with the query key (hashed id)
+        :return:
         """
-        key_list = list(self.keys.keys())
-        return ', '.join(str(key) for key in key_list) if self.keys else 'nothing'
-
-    def print_finger_table(self) -> str:
-        """
-        Helper method to print finger table contents.
-        :return: string message of finger table
-        """
-        return '\n'.join([str(row) for row in self.finger[TABLE_IDX:]])
+        for index in range(M, 0, -1):
+            if self.finger[index].node in ModRange(self.node + 1, value_id, NODES):
+                return self.finger[index].node
+            return self.node
 
     def update_finger_table(self, val1, val2):
         pass
@@ -384,8 +435,119 @@ class ChordNode(object):
     def get_member_data(self, val1):
         pass
 
+    def update_members(self):
+        """
+        Update all connected, active members of new connection and add them to their
+        finger table
+        """
+        # find the last node whose i-th finger might be the new node
+        for index in range(1, M + 1):
+            last_node = self.find_predecessor((1 + self.node - 2 ** (index - 1) + NODES) % NODES)
+            self.call_rpc(last_node, QueryMessage.UFT, self.node, index)
+
     def update_keys(self):
-        pass
+        """
+        Update the key list for a node. Transfer any keys to new successor from the predecessor,
+        and removes the transferred keys from the list
+        :return:
+        """
+        if not self.node_keys:
+            print('not action taken')
+            return
+
+        self.lock.acquire()
+        removed_keys = []
+
+        for key,value in self.node_keys.items():
+            if key not in ModRange(self.pred + 1, self.node + 1, NODES):
+                removed_keys.append(key)
+                node_prime = self.find_successor(key)
+                self.call_rpc(node_prime, QueryMessage.ADD_KEY, key, value)
+                print('Key {} transferred to node ID [{}] at {}'.format(key, node_prime, datetime.now().time()))
+
+    def print_node_info(self):
+        """
+        Helper function to print data for node
+        """
+        print(''.join(['\n******** Node Informaiton ********\n',
+                       'node ID: {}\n'.format(self.node),
+                       'predecessor: {}\n'.format(self.pred),
+                       'successor: {}\n'.format(self.successor),
+                       'keys: {}\n'.format(self.print_key_list()),
+                       '\nfinger table:\n', self.print_finger_table(),
+                       '\n**********************\n']))
+
+    def print_key_list(self) -> str:
+        """
+        Helper method to print the list of keys
+        :return: string message of keys
+        """
+        key_list = list(self.node_keys.keys())
+        return ', '.join(str(key) for key in key_list) if self.node_keys else 'nothing'
+
+    def print_finger_table(self) -> str:
+        """
+        Helper method to print finger table contents.
+        :return: string message of finger table
+        """
+        return '\n'.join([str(row) for row in self.finger[TABLE_IDX:]])
+
+    @staticmethod
+    def lookup_address(node_prime, false_port=None) -> tuple:
+        """
+        Looks up the address for a given node. If no address mapping is found for the node,
+        we look for the address and record it.
+        :param node_prime: node for address lookup
+        :param false_port: possible port number that hashed to an ID that a node ID isn't
+                           listening on.
+        :return: (host, port) address tuple
+        """
+        # Create a record for ports with addresses hashed to an existing
+        # node ID b/c they weren't actually listening
+        if false_port:
+            FALSE_PORT_LIST.append(false_port)
+            del NODE_ADDRESS_MAP[node_prime]
+
+        if node_prime not in NODE_ADDRESS_MAP:
+            for port in range(TEST_PORT, MAX_PORT):
+                if port in FALSE_PORT_LIST:
+                    continue  # skip bad ports
+
+                n_prime_add = (HOST, port)
+                queried_node = ChordNode.lookup_node(n_prime_add)
+
+                if queried_node == node_prime:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                        try:
+                            sock.bind(n_prime_add)
+                        except Exception as e:  # If binding fails, assuming node is listening at the port
+                            NODE_ADDRESS_MAP[node_prime] = n_prime_add
+                            return n_prime_add
+
+        return NODE_ADDRESS_MAP[node_prime]
+
+    @staticmethod
+    def lookup_node(address) -> int:
+        """
+        Calls the hash function to convert the address to an M-Bit ID then returns
+        that ID
+        :param address: tuple (host, port)
+        :return: M-Bit node ID
+        """
+        return ChordNode.hash_M(address) % NODES
+
+    @staticmethod
+    def hash_M(data) -> int:
+        """
+        Hashes values to M bit integers using SHA1
+        :param data: data to hash
+        :return: 160-bit number
+        """
+        hashed_data = pickle.dumps(data)
+        hashed_data = hashlib.sha1(hashed_data).digest()
+
+        return int.from_bytes(hashed_data, byteorder='big')
+
 
 '''def print_member_data(self) -> str:
         """
@@ -400,6 +562,3 @@ class ChordNode(object):
                'Finger Table: {}\n' \
                '**************\n'.format(self.node, self.predecessor, self.successor, self.print_key_list(),
                                          self.print_finger_table())'''
-
-
-
