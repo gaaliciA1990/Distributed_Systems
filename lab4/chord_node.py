@@ -19,8 +19,8 @@ M = hashlib.sha1().digest_size * 8
 NODES = 2 ** M
 BUF_SZ = 4096  # socket recv arg
 BACKLOG = 100  # socket listen arg
-TEST_PORT = 43544  # for testing use port numbers on localhost at TEST_BASE+n
-MAX_PORT = 2 ** 16
+PORT_RNG_START = 43544  # for testing use port numbers on localhost at TEST_BASE+n
+PORT_RANGE_END = 65536  # end port range, allowing the members to be within avail ports
 HOST = 'localhost'
 TIMEOUT = 1.5
 TABLE_IDX = M - 25 if M - 25 > 0 else 1
@@ -47,6 +47,7 @@ class QueryMessage(Enum):
 class ModRange(object):
     """
     Range-like object that wraps around 0 at some divisor using modulo arithmetic.
+    This represents the "circular-graph" that the chord network exists on.
 
     >> mr = ModRange(1, 4, 100)
     >> mr
@@ -117,7 +118,8 @@ class ModRange(object):
 
 class ModRangeIter(object):
     """
-    Iterator class for ModRange
+    Iterator class for ModRange. Allows us to iterator throughout the chord system
+    to check for active Nodes
     """
 
     def __init__(self, mr, i, j):
@@ -204,7 +206,8 @@ class ChordNode(object):
         self.port = 6000
         self.member = False  # initial state of membership for connections is set to false when initialized
         self.lock = Lock()
-        # When a new connection is made, a known port is passed to determine who the new connection knows in the Sys
+
+        # When a new member joins, a known port is passed to determine who the new connection knows in the Sys
         self.connected_node = ChordNode.lookup_node((HOST, known_port)) if known_port else None
 
         self.listener_server = self.initiate_listening_server()
@@ -267,9 +270,9 @@ class ChordNode(object):
                 print('Node ID {}'.format(self.node))
             print('Port {}: wating for connection...'.format(self.port))
             client_sock, client_add = self.listener_server.accept()
-            Thread(target=self.handle_request(client_sock)).start()
+            Thread(target=self.handle_rpc(client_sock)).start()
 
-    def handle_request(self, client_sock):
+    def handle_rpc(self, client_sock):
         """
         Handles RPC calls from other nodes sent from the thread server loop. Returns result
         of client node
@@ -280,10 +283,10 @@ class ChordNode(object):
         request, val1, val2 = pickle.loads(client_rpc)
 
         print('Request received at {} with message: {}'.format(datetime.now().time(), request))
-        result = self.send_request(request, val1, val2)
+        result = self.send_rpc(request, val1, val2)
         client_sock.sendall(pickle.dumps(result))
 
-    def send_request(self, request, val1, val2):
+    def send_rpc(self, request, val1, val2):
         """
         This method propagates the incoming query request from another node to
         the corresponding local method, based on the type of request received
@@ -340,7 +343,7 @@ class ChordNode(object):
 
         # if the node is already self, conduct the query
         if node_prime == self.node:
-            return self.send_request(query_req, val1, val2)
+            return self.send_rpc(query_req, val1, val2)
 
         # When the node is not self, we need to figure our who to contact and send the query to
         for _ in range(50):
@@ -460,7 +463,7 @@ class ChordNode(object):
             node_prime = self.find_successor(key)
             return self.call_rpc(node_prime, QueryMessage.ADD_KEY, val)
 
-    def get_key_data(self, key):
+    def get_key_data(self, key) -> int:
         """
         Returns the value associated with key
         :param key: Key to lookup
@@ -474,7 +477,7 @@ class ChordNode(object):
             if key in self.node_keys:
                 return self.node_keys[key]
             else:
-                return None
+                return -1  # if key is not found in our table, -1 indicates not found
         else:
             # key is not mine, find responsible successor
             node_prime = self.find_successor(key)
@@ -555,10 +558,24 @@ class ChordNode(object):
         return '\n'.join([str(row) for row in self.finger[TABLE_IDX:]])
 
     @staticmethod
+    def assign_port() -> int:
+        """
+        Returns an available port within our port range
+        :return: available port
+        """
+        port = 0
+
+        while port not in range(PORT_RNG_START, PORT_RANGE_END):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_sock:
+                port_sock.bind((HOST, port))
+                port = port_sock.getsockname()[1]
+        return port
+
+    @staticmethod
     def lookup_address(node_prime, false_port=None) -> tuple:
         """
-        Looks up the address for a given node. If no address mapping is found for the node,
-        we look for the address and record it.
+        Looks up the address for a given node by checking within the port range. If no address mapping is found for the
+        node, we look for the address and record it.
         :param node_prime: node for address lookup
         :param false_port: possible port number that hashed to an ID that a node ID isn't
                            listening on.
@@ -571,7 +588,7 @@ class ChordNode(object):
             del NODE_ADDRESS_MAP[node_prime]
 
         if node_prime not in NODE_ADDRESS_MAP:
-            for port in range(TEST_PORT, MAX_PORT):
+            for port in range(PORT_RNG_START, PORT_RANGE_END):
                 if port in FALSE_PORT_LIST:
                     continue  # skip bad ports
 
@@ -582,7 +599,7 @@ class ChordNode(object):
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                         try:
                             sock.bind(n_prime_add)
-                        except Exception as e:  # If binding fails, assuming node is listening at the port
+                        except OSError as e:  # If binding fails, assuming node is listening at the port
                             NODE_ADDRESS_MAP[node_prime] = n_prime_add
                             return n_prime_add
 
@@ -596,16 +613,87 @@ class ChordNode(object):
         :param address: tuple (host, port)
         :return: M-Bit node ID
         """
-        return ChordNode.hash_M(address) % NODES
+        return ChordNode.hash_id(address) % NODES
 
     @staticmethod
-    def hash_M(data) -> int:
+    def query_key(node_address, key: str):
         """
-        Hashes values to M bit integers using SHA1
+        Asks a Chord node to look up a key and return the value that key is mapped to. Uses a helper method
+        to talk to the node
+        :param node_address: host and port of the node to submit the query to
+        :param key: the key to look up
+        :return: the value associated with the key in the first index (0)
+        """
+        return ChordNode.query_node(node_address, QueryMessage.GET_DATA, key=key)[0]
+
+    @staticmethod
+    def hash_id(data) -> int:
+        """
+        Hashes values using SHA1 and shorten to 8 digits
         :param data: data to hash
-        :return: 160-bit number
+        :return: shortend hashed value
         """
         hashed_data = pickle.dumps(data)
-        hashed_data = hashlib.sha1(hashed_data).digest()
+        hashed_data = int(hashlib.sha1(hashed_data).hexdigest(), 16) % (10 ** 8)
 
-        return int.from_bytes(hashed_data, byteorder='big')
+        return hashed_data
+
+    @staticmethod
+    def populate_network(address, data_keys):
+        """
+        Populates the chord system with the keys mapped to their data values to a given node. Uses helper method
+        query_node to add data to the node
+        :param address: node host and port
+        :param data_keys: the dictionary of keys to add to the network
+        :return: the data from the node
+        """
+        return ChordNode.query_node(address, QueryMessage.ADD_KEY, key_dict=data_keys)
+
+    @staticmethod
+    def query_node(node_address, query_msg: QueryMessage, key=None, key_dict=None) -> list:
+        """
+        Helper method for populating or querying data for a node (based on address) in the Chord network.
+        :param node_address: host, port of node
+        :param query_msg: Query message to call correct method
+        :param key: key to pull value from (only if supplied)
+        :param key_dict: dictionary of key:value pairs of data to add (only if supplied)
+        :return: list of data queried or added
+        """
+        if query_msg != QueryMessage.ADD_KEY or query_msg != QueryMessage.GET_DATA:
+            raise ValueError('Invalid query request. {} and {} requests expected.'.format(QueryMessage.ADD_KEY.value,
+                                                                                          QueryMessage.GET_DATA.value))
+
+        if key:
+            key_map = {key: None}
+
+        query_data = []
+
+        for key, value in key_map.items():
+            hash_id = ChordNode.hash_id(key) % NODES
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as query_sock:
+                try:
+                    query_sock.connect(node_address)
+                    message = pickle.dumps((query_msg.value, hash_id, value))
+                    query_sock.sendall(message)
+                    query_data.append(pickle.loads(query_sock.recv(BUF_SZ)))
+                except OSError as err:
+                    print('RPC request [{}] failed at {}'.format(query_msg.value, datetime.now().time()))
+
+        return query_data
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print('Usage: chord_node.py [NODE PORT] (If starting new network, enter 0)')
+        exit(1)
+
+        known_port = int(sys.argv[1])
+        new_port = ChordNode.assign_port()
+
+        if known_port == 0:
+            new_node = ChordNode(new_port)
+        else:
+            new_node = ChordNode(new_port, known_port)
+
+        new_node.join_network()
+        new_node.start_server()
