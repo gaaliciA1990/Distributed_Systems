@@ -269,7 +269,7 @@ class ChordNode(object):
         while True:
             if self.member:
                 print('Node ID {}'.format(self.node))
-            print('Port {}: wating for new connection...'.format(self.port))
+            print('\nPort {}: wating for new connection...\n'.format(self.port))
             client_sock, client_add = self.listener_server.accept()
             Thread(target=self.handle_rpc, args=(client_sock,)).start()
 
@@ -464,10 +464,13 @@ class ChordNode(object):
         """
         if key >= NODES:
             raise ValueError('Error: Max ID should be {}'.format(NODES - 1))
+
         # if key is mine, add the value to our key list
         if key in ModRange(self.predecessor + 1, self.node + 1, NODES):
             self.node_keys[key] = val
-            print('Key {} added at {}'.format(key, datetime.now().time()))
+            success = 'Key {} added at {}'.format(key, datetime.now().time())
+            print(success)
+            return success
         else:
             # if key is not mine, find responsible successor and add to their list
             node_prime = self.find_successor(key)
@@ -661,7 +664,7 @@ class ChordNode(object):
         return ChordNode.query_node(address, QueryMessage.ADD_KEY, key_dict=data_keys)
 
     @staticmethod
-    def query_node(node_address, query_msg: QueryMessage, key=None, key_dict=None) -> list:
+    def query_node(node_address, query_msg: QueryMessage, key_dict=None, key=None) -> list:
         """
         Helper method for populating or querying data for a node (based on address) in the Chord network.
         :param node_address: host, port of node
@@ -670,16 +673,16 @@ class ChordNode(object):
         :param key_dict: dictionary of key:value pairs of data to add (only if supplied)
         :return: list of data queried or added
         """
-        if query_msg != QueryMessage.ADD_KEY or query_msg != QueryMessage.GET_DATA:
+        if query_msg != QueryMessage.ADD_KEY and query_msg != QueryMessage.GET_DATA:
             raise ValueError('Invalid query request. {} and {} requests expected.'.format(QueryMessage.ADD_KEY.value,
                                                                                           QueryMessage.GET_DATA.value))
 
         if key:
-            key_map = {key: None}
+            key_dict = {key: None}
 
         query_data = []
 
-        for key, value in key_map.items():
+        for key, value in key_dict.items():
             hash_id = ChordNode.hash_id(key) % NODES
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as query_sock:
                 try:
@@ -688,8 +691,8 @@ class ChordNode(object):
                     query_sock.sendall(message)
                     query_data.append(pickle.loads(query_sock.recv(BUF_SZ)))
                 except OSError as err:
-                    print('RPC request [{}] failed at {}'.format(query_msg.value, datetime.now().time()))
-
+                    print('RPC request [{}] failed at {}: {}'.format(query_msg.value, datetime.now().time(), err))
+                    raise err
         return query_data
 
 
