@@ -26,6 +26,7 @@ TIMEOUT = 1.5
 TABLE_IDX = M - 25 if M - 25 > 0 else 1
 FALSE_PORT_LIST = []
 NODE_ADDRESS_MAP = {}
+RNG = 1
 
 
 class QueryMessage(Enum):
@@ -283,8 +284,8 @@ class ChordNode(object):
         client_rpc = client_sock.recv(BUF_SZ)
         request, val1, val2 = pickle.loads(client_rpc)
 
-        print('Request received at {} with message: {}'.format(datetime.now().time(), request))
-        result = self.send_rpc(request, val1, val2)
+        print('Request received at {} with message: {}'.format(datetime.now().time(), request.value))
+        result = self.send_rpc(request.value, val1, val2)
         client_sock.sendall(pickle.dumps(result))
 
     def send_rpc(self, request, val1, val2):
@@ -300,7 +301,6 @@ class ChordNode(object):
         if request == QueryMessage.FIND_SUCC.value:
             return self.find_successor(val1)
         # request to return successor
-
         elif request == QueryMessage.SUCC.value:
             if val1:
                 self.successor(val1)
@@ -349,14 +349,13 @@ class ChordNode(object):
         :param val2: typically node data, if present
         :return: value of the called method
         """
-        query_req = query.value
 
         # if the node is already self, conduct the query
         if node_prime == self.node:
-            return self.send_rpc(query_req, val1, val2)
+            return self.send_rpc(query, val1, val2)
 
         # When the node is not self, we need to figure our who to contact and send the query to
-        for _ in range(50):
+        for _ in range(RNG):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as prime_sock:
                 node_prime_add = self.lookup_address(node_prime)
                 prime_sock.settimeout(TIMEOUT)
@@ -614,6 +613,8 @@ class ChordNode(object):
                             sock.bind(n_prime_add)
                         except OSError as e:  # If binding fails, assuming node is listening at the port
                             NODE_ADDRESS_MAP[node_prime] = n_prime_add
+                        except KeyError as keyerr:
+                            print(keyerr)
                             return n_prime_add
 
         return NODE_ADDRESS_MAP[node_prime]
@@ -687,18 +688,18 @@ class ChordNode(object):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as query_sock:
                 try:
                     query_sock.connect(node_address)
-                    message = pickle.dumps((query_msg.value, hash_id, value))
+                    message = pickle.dumps((query_msg, hash_id, value))
                     query_sock.sendall(message)
                     query_data.append(pickle.loads(query_sock.recv(BUF_SZ)))
                 except OSError as err:
-                    print('RPC request [{}] failed at {}: {}'.format(query_msg.value, datetime.now().time(), err))
+                    print('RPC request [{}] failed at {}: {}'.format(query_msg, datetime.now().time(), err))
                     raise err
         return query_data
 
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
-        print('Usage: chord_node.py [NODE PORT] (If starting new network, enter 0)')
+        print('Usage: python3 chord_node.py PORT (For new network, enter 0. Else, enter a connected node port)')
         exit(1)
 
     known_port = int(sys.argv[1])

@@ -68,4 +68,4 @@ if __name__ == '__main__':
         print(ChordNode.populate_network(address, data))  # populate the data to the node and print the response
         print('\nData populated to node {}'.format(node))
     except OSError as err:
-        print('Error adding key due to: {}'.format(err))
+        print('\nError adding key due to: {}'.format(err))
