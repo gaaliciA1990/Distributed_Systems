@@ -185,7 +185,7 @@ class FingerEntry(object):
         Something like the interval|node charts in the paper
         :return: string format of the where to start, the next start location and the node
         """
-        return ''.format(self.start, self.next_start, self.node)
+        return '{}| [{:2}, {:<2}) | '.format(self.node, self.start, self.next_start)
 
     def __contains__(self, value_id):
         """
@@ -199,11 +199,11 @@ class FingerEntry(object):
 class ChordNode(object):
 
     def __init__(self, port, known_port=None):
+        self.port = port
         self.node = self.lookup_node((HOST, port))
         self.finger = [None] + [FingerEntry(self.node, k) for k in range(1, M + 1)]  # indexing starts at 1
         self.pred = None
         self.node_keys = {}
-        self.port = 6000
         self.member = False  # initial state of membership for connections is set to false when initialized
         self.lock = Lock()
 
@@ -211,7 +211,8 @@ class ChordNode(object):
         self.connected_node = ChordNode.lookup_node((HOST, known_port)) if known_port else None
 
         self.listener_server = self.initiate_listening_server()
-        Thread(target=self.start_server()).start()
+        print('Node ID = {} is on {}'.format(self.node, (HOST, port)))
+        Thread(target=self.start_server).start()
 
     @property
     def successor(self):
@@ -268,9 +269,9 @@ class ChordNode(object):
         while True:
             if self.member:
                 print('Node ID {}'.format(self.node))
-            print('Port {}: wating for connection...'.format(self.port))
+            print('Port {}: wating for new connection...'.format(self.port))
             client_sock, client_add = self.listener_server.accept()
-            Thread(target=self.handle_rpc(client_sock)).start()
+            Thread(target=self.handle_rpc, args=(client_sock,)).start()
 
     def handle_rpc(self, client_sock):
         """
@@ -299,32 +300,41 @@ class ChordNode(object):
         if request == QueryMessage.FIND_SUCC.value:
             return self.find_successor(val1)
         # request to return successor
+
         elif request == QueryMessage.SUCC.value:
             if val1:
                 self.successor(val1)
             else:
                 return self.successor
+
         # request to find closest preceding finger
         elif request == QueryMessage.CPF.value:
             return self.closest_preceding_finger(val1)
+
         # request to update finger table
         elif request == QueryMessage.UFT.value:
             print(self.update_finger_table(val1, val2))
+
         # request to set predecessor
         elif request == QueryMessage.SET_PRED.value:
             self.predecessor(val1)
+
         # request to get predecessor
         elif request == QueryMessage.GET_PRED.value:
             return self.predecessor
+
         # request to add new key
         elif request == QueryMessage.ADD_KEY.value:
             return self.add_key(val1, val2)
+
         # request to get data on a node
         elif request == QueryMessage.GET_DATA.value:
             return self.get_key_data(val1)
+
         # request to update key(s)
         elif request == QueryMessage.UPDATE_KEYS.value:
             return self.update_keys()
+
         else:
             print('\nQuery failed at {}: no such query exists\n'.format(datetime.now().time()))
             return None
@@ -374,7 +384,7 @@ class ChordNode(object):
         else:
             for index in range(1, M + 1):
                 self.finger[index].node = self.node
-            self.predecessor(self.node)
+            self.predecessor = self.node
 
         self.member = True
         print('New connection established at {} with node ID [{}]'.format(datetime.now().time(), self.node))
@@ -533,14 +543,14 @@ class ChordNode(object):
         """
         Helper function to print data for node
         """
-        return '\n******* Member Information *******\n' \
-               "Node ID: {}\n" \
-               'Predecessor node: {}\n' \
-               'Successor node: {}\n' \
-               'Keys: {}\n' \
-               'Finger Table: {}\n' \
-               '**************\n'.format(self.node, self.predecessor, self.successor, self.print_key_list(),
-                                         self.print_finger_table())
+        print('\n******* Member Information *******\n' \
+              "Node ID: {}\n" \
+              'Predecessor node: {}\n' \
+              'Successor node: {}\n' \
+              'Keys:\n{}\n' \
+              'Finger Table:\nowner node | range |\n{}\n' \
+              '**************\n'.format(self.node, self.predecessor, self.successor, self.print_key_list(),
+                                        self.print_finger_table()))
 
     def print_key_list(self) -> str:
         """
@@ -629,14 +639,15 @@ class ChordNode(object):
     @staticmethod
     def hash_id(data) -> int:
         """
-        Hashes values using SHA1 and shorten to 8 digits
+        Hashes values using SHA1 and sorts in ascending order (Big endian)
         :param data: data to hash
         :return: shortend hashed value
         """
         hashed_data = pickle.dumps(data)
-        hashed_data = int(hashlib.sha1(hashed_data).hexdigest(), 16) % (10 ** 8)
+        hashed_data = hashlib.sha1(hashed_data).digest()
 
-        return hashed_data
+        # return the hashed data in ascending order
+        return int.from_bytes(hashed_data, byteorder='big')
 
     @staticmethod
     def populate_network(address, data_keys):
@@ -687,13 +698,13 @@ if __name__ == '__main__':
         print('Usage: chord_node.py [NODE PORT] (If starting new network, enter 0)')
         exit(1)
 
-        known_port = int(sys.argv[1])
-        new_port = ChordNode.assign_port()
+    known_port = int(sys.argv[1])
+    new_port = ChordNode.assign_port()
 
-        if known_port == 0:
-            new_node = ChordNode(new_port)
-        else:
-            new_node = ChordNode(new_port, known_port)
+    if known_port == 0:
+        new_node = ChordNode(new_port)
+    else:
+        new_node = ChordNode(new_port, known_port)
 
-        new_node.join_network()
-        new_node.start_server()
+    new_node.join_network()
+    new_node.start_server()
