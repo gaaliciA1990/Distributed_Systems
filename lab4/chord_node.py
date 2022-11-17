@@ -297,6 +297,7 @@ class ChordNode(object):
         :param val2: argument param
         :return:
         """
+
         # request to find successsor
         if request == QueryMessage.FIND_SUCC.value:
             return self.find_successor(val1)
@@ -349,15 +350,15 @@ class ChordNode(object):
         :param val2: typically node data, if present
         :return: value of the called method
         """
-
+        false_port = None
         # if the node is already self, conduct the query
         if node_prime == self.node:
-            return self.send_rpc(query, val1, val2)
+            return self.send_rpc(query.value, val1, val2)
 
         # When the node is not self, we need to figure our who to contact and send the query to
         for _ in range(RNG):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as prime_sock:
-                node_prime_add = self.lookup_address(node_prime)
+                node_prime_add = self.lookup_address(node_prime, false_port)
                 prime_sock.settimeout(TIMEOUT)
 
                 try:
@@ -368,6 +369,8 @@ class ChordNode(object):
                 except Exception as e:
                     print('Connection to node ID {} failed. Thread may be busy. Connection aborted at {}'.format(
                         node_prime, datetime.now().time()))
+                    if false_port:
+                        false_port = node_prime_add[1]
 
     def join_network(self):
         """
@@ -378,7 +381,7 @@ class ChordNode(object):
         if self.connected_node is not None:
             self.init_finger_table()
             self.update_members()
-            # reorganize keys from pred since new connection is now the successor of their pred
+            # reorganize keys from pred since new connection is now the successor and new owner of keys
             self.call_rpc(self.successor, QueryMessage.UPDATE_KEYS)
         else:
             for index in range(1, M + 1):
@@ -444,8 +447,8 @@ class ChordNode(object):
         :param val: Value to update the finger table with
         :param index: Index to check in the table
         """
-        if self.finger[index].start != self.finger[index].node and val in ModRange(self.finger[index].start,
-                                                                                   self.finger[index].node, NODES):
+        if (self.finger[index].start != self.finger[index].node
+                and val in ModRange(self.finger[index].start, self.finger[index].node, NODES)):
             print('Updating finger table at {}'.format(datetime.now().time()))
             self.finger[index].node = val
             pred = self.predecessor
@@ -584,7 +587,7 @@ class ChordNode(object):
         return port
 
     @staticmethod
-    def lookup_address(node_prime, false_port=None) -> tuple:
+    def lookup_address(node_prime, false_port=None):
         """
         Looks up the address for a given node by checking within the port range. If no address mapping is found for the
         node, we look for the address and record it.
@@ -606,16 +609,16 @@ class ChordNode(object):
 
                 n_prime_add = (HOST, port)
                 queried_node = ChordNode.lookup_node(n_prime_add)
-
+# TODO: FIX ISSUE HERE. BUG WITH QUERIED_NODE NOT MATCHING NODE_PRIME, SO ADDRESS MAP IS NOT GETTING UPDATED
                 if queried_node == node_prime:
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                         try:
                             sock.bind(n_prime_add)
                         except OSError as e:  # If binding fails, assuming node is listening at the port
                             NODE_ADDRESS_MAP[node_prime] = n_prime_add
+                            return n_prime_add
                         except KeyError as keyerr:
                             print(keyerr)
-                            return n_prime_add
 
         return NODE_ADDRESS_MAP[node_prime]
 
@@ -645,7 +648,7 @@ class ChordNode(object):
         """
         Hashes values using SHA1 and sorts in ascending order (Big endian)
         :param data: data to hash
-        :return: shortend hashed value
+        :return: hashed value
         """
         hashed_data = pickle.dumps(data)
         hashed_data = hashlib.sha1(hashed_data).digest()
