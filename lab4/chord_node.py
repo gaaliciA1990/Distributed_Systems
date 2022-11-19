@@ -26,7 +26,7 @@ TIMEOUT = 1.5
 TABLE_IDX = M - 25 if M - 25 > 0 else 1
 FALSE_PORT_LIST = []
 NODE_ADDRESS_MAP = {}
-RNG = 1
+RNG = 10
 
 
 class QueryMessage(Enum):
@@ -285,8 +285,11 @@ class ChordNode(object):
         request, val1, val2 = pickle.loads(client_rpc)
 
         print('Request received at {} with message: {}'.format(datetime.now().time(), request.value))
-        result = self.send_rpc(request.value, val1, val2)
-        client_sock.sendall(pickle.dumps(result))
+        try:
+            result = self.send_rpc(request.value, val1, val2)
+            client_sock.sendall(pickle.dumps(result))
+        except Exception as ex:
+            print("error found {}".format(ex))
 
     def send_rpc(self, request, val1, val2):
         """
@@ -318,7 +321,7 @@ class ChordNode(object):
 
         # request to set predecessor
         elif request == QueryMessage.SET_PRED.value:
-            self.predecessor(val1)
+            self.predecessor = val1
 
         # request to get predecessor
         elif request == QueryMessage.GET_PRED.value:
@@ -398,7 +401,7 @@ class ChordNode(object):
         Initialize nodes finger table of successor nodes based on connected_node
         """
         self.successor = self.call_rpc(self.connected_node, QueryMessage.FIND_SUCC, self.finger[1].start)
-        self.predecessor(self.call_rpc(self.successor, QueryMessage.GET_PRED))
+        self.predecessor = self.call_rpc(self.successor, QueryMessage.GET_PRED)
         self.call_rpc(self.successor, QueryMessage.SET_PRED, self.node)
 
         for index in range(1, M):
@@ -425,7 +428,7 @@ class ChordNode(object):
         """
         node_prime = self.node
 
-        while id not in ModRange(node_prime + 1, self.call_rpc(node_prime, QueryMessage.SUCC) + 1, NODES):
+        while value_id not in ModRange(node_prime + 1, self.call_rpc(node_prime, QueryMessage.SUCC) + 1, NODES):
             node_prime = self.call_rpc(node_prime, QueryMessage.CPF, value_id)
         return node_prime
 
@@ -514,7 +517,7 @@ class ChordNode(object):
         and removes the transferred keys from the list
         """
         if not self.node_keys:
-            print('not action taken')
+            print('no action taken')
             return
 
         self.lock.acquire()

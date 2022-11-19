@@ -9,7 +9,7 @@ import csv
 import sys
 from chord_node import ChordNode
 
-MAX = 2500  # max number of rows to pull from the csv file
+MAX = 250  # max number of rows to pull from the csv file
 HOST = 'localhost'
 
 
