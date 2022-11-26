@@ -37,4 +37,18 @@ The program implements the Chord system, a P2P lookup service. This system allow
 join the group when there is no data yet in the DHT and other nodes update their finger tables
 with each join. The system allows a querier to talk to any node in the network to query a value
 for a given key or add a key/value pair. Removing a key is not in scope for this lab. 
+</br>
+Implementation runs, but the server crashes when trying to add a new connection. Debugging didn't find the 
+root cause. Recommend starting over :/
+### Grade:TBG/75
+
+
+## Lab 5 - BitCoin Blockchain
+The program will obtain an old block from the BitCoin blockchain with a P2P connection (TCP/IP). The block numbers
+corresponds to our SU ID. 
+
+For Extra Credit:
+- Displays the transactions in block
+- Manipulate one of the transaction in the blcok to changes its output account. Fix up the block to correctly represent the modified data
+- Show the program-genrated report how the hash of the block has changed and way the block would be rejected by peers.
 ### Grade:TBG/75
