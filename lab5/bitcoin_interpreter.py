@@ -152,7 +152,7 @@ def checksum(payload: bytes) -> int:
     return hash(payload)[:4]
 
 
-def swap_endian(b: bytes) -> int:
+def swap_endian(b: bytes) -> bytes:
     """
     Swap the endianness of the given bytes. If little, swaps to big. If big,
     swaps to little.
@@ -173,6 +173,7 @@ def print_message(msg: bytes, text=None, height=None) -> str:
     :return: message type string
     """
     print('\n{}MESSAGE'.format('' if text is None else (text + ' ')))
+
     print('({}) {}'.format(len(msg), msg[:60].hex() + ('' if len(msg) < 60 else '...')))
 
     payload = msg[HDR_SZ:]
@@ -230,12 +231,14 @@ def print_block_message(payload):
     print('{}{:32} version: {}'.format(SPACES, version.hex(), unmarshal_int(version), SPACES))
     print("{}{:32}\n{}{:32} previous block hash\n{}".format(SPACES, prev_hash.hex()[:32], SPACES, prev_hash.hex()[32:],
                                                             SPACES))
-    print('{}{:32}\n{}{:32} merkle root hash\n{}-'
-          .format(SPACES, merkle_hash.hex()[:32], SPACES, merkle_hash.hex()[32:], SPACES))
+    print(
+        '{}{:32}\n{}{:32} merkle root hash\n{}-'.format(SPACES, merkle_hash.hex()[:32], SPACES, merkle_hash.hex()[32:],
+                                                        SPACES))
     print('{}{:32} epoch time: {}'.format(SPACES, epoch_time.hex(), time_str))
     print('{}{:32} bits: {}'.format(SPACES, bits.hex(), unmarshal_uint(bits)))
     print('{}{:32} nonce: {}'.format(SPACES, nonce.hex(), unmarshal_uint(nonce)))
     print('{}{:32} transaction count: {}'.format(SPACES, block_count_bytes.hex(), block_count))
+
     print_transaction(transactions)
 
 
@@ -246,20 +249,20 @@ def print_inv_message(payload, height):
     :param height:  local blockchaing height
     """
     inv_bytes, inv = unmarshal_compactsize(payload)
-    data = len(inv_bytes)
+    val = len(inv_bytes)
     inventory = []
 
     for _ in range(inv):
-        entry = payload[data:data + 4], payload[data + 4: data + 36]
+        entry = payload[val:val + 4], payload[val + 4: val + 36]
         inventory.append(entry)
-        data += 36
+        val += 36
 
     print('{}{:32} inv count: {}'.format(SPACES, inv_bytes.hex(), inv))
 
-    for data, (tx_type, tx_hash) in enumerate(inventory, start=height if height else 1):
+    for val, (tx_type, tx_hash) in enumerate(inventory, start=height if height else 1):
         print('\n{}{:32} type: {}\n{}-'.format(SPACES, tx_type.hex(), unmarshal_uint(tx_type), SPACES))
         block_hash = swap_endian(tx_hash).hex()
-        print('{}{:32}\n{}{:32} block #{} hash'.format(SPACES, block_hash[:32], SPACES, block_hash[32:], data))
+        print('{}{:32}\n{}{:32} block #{} hash'.format(SPACES, block_hash[:32], SPACES, block_hash[32:], val))
 
 
 def print_getblocks_message(payload):
@@ -269,14 +272,14 @@ def print_getblocks_message(payload):
     """
     version = payload[:4]
     getblocks_bytes, getblocks_count = unmarshal_compactsize(payload[4:])
-    data = 4 + len(getblocks_bytes)
+    val = 4 + len(getblocks_bytes)
     block_header_hashes = []
 
     for _ in range(getblocks_count):
-        block_header_hashes.append(payload[data:data + 32])
-        data += 32
+        block_header_hashes.append(payload[val:val + 32])
+        val += 32
 
-    end_hash = payload[data:]
+    end_hash = payload[val:]
 
     print('{}{:32} version: {}'.format(SPACES, version.hex(), unmarshal_uint(version)))
     print('{}{:32} hash count: {}'.format(SPACES, getblocks_bytes.hex(), getblocks_count))
@@ -306,12 +309,12 @@ def print_addr_message(payload):
     :param payload: address message to print
     """
     address_bytes, address_count = unmarshal_compactsize(payload)
-    data = len(address_bytes)
+    val = len(address_bytes)
 
-    epoch_time = payload[data:data + 4]  # extract the time from the data in ip_count
-    services = payload[data + 4:data + 12]  # extract the services info from the data in ip_count
-    ip_address = payload[data + 12:data + 28]  # extract the IP address from the data in ip_count
-    port = payload[data + 28:]  # extract the port from the data in ip_count
+    epoch_time = payload[val:val + 4]  # extract the time from the data in ip_count
+    services = payload[val + 4:val + 12]  # extract the services info from the data in ip_count
+    ip_address = payload[val + 12:val + 28]  # extract the IP address from the data in ip_count
+    port = payload[val + 28:]  # extract the port from the data in ip_count
 
     time_str = gmtime(unmarshal_int(epoch_time))
 
@@ -395,7 +398,7 @@ def print_version_msg(b):
         print('{}{:32} EXTRA!!'.format(prefix, extra.hex()))
 
 
-def print_header(header, expected_cksum=None):
+def print_header(header, expected_cksum=None) -> str:
     """
     Report the contents of the given bitcoin message header
     :param header: bitcoin message header (bytes or bytearray)
@@ -437,23 +440,53 @@ def print_transaction(txn):
     # Parse the version adn transaction input count bytes
     version = txn[:4]
     txn_count_bytes, txn_count = unmarshal_compactsize(txn[4:])
-    data = 4 + len(txn_count_bytes)
+    val = 4 + len(txn_count_bytes)
 
     # Parse coinbase bytes
-    coinbase_txn, coinbase_bytes_count = parse_coinbase(txn[data:], version)
+    coinbase_txn, coinbase_bytes_count = parse_coinbase(txn[val:], version)
     txn_in_list = [(coinbase_txn, coinbase_bytes_count)]
-    data += len(b''.join(coinbase_txn))
+    val += len(b''.join(coinbase_txn))
 
     # Parse transaction input bytes
     for _ in range(1, txn_count):
-        txn_in, script_bytes_count = parse_tx_in(txn[data:])
+        txn_in, script_bytes_count = parse_transaction_in(txn[val:])
         txn_in_list.append((txn_in, script_bytes_count))
-        data += len(b''.join(txn_in))
+        val += len(b''.join(txn_in))
+
+    # Parse transaction output count in bytes
+    txn_out_bytes, txn_out_count = unmarshal_compactsize(txn[val:])
+    txn_out_list = []
+    val += len(txn_out_bytes)
+
+    # Parse transaction output bytes
+    for _ in range(txn_out_count):
+        txn_out, pk_script_count = parse_txn_out(txn[val:])
+        txn_out_list.append((txn_out, pk_script_count))
+        val += len(b''.join(txn_out))
+
+    lock_time = txn[val: val + 4]
+
+    print('{}{:32} version: {}'.format(SPACES, version.hex(), unmarshal_uint(version)))
+
+    print('\n{}Transaction Inputs:'.format(SPACES))
+    print(SPACES + '-' * 32)
+    print('{}{:32} input txn count: {}'.format(SPACES, txn_count_bytes.hex(), txn_count))
+    print_transaction_inputs(txn_in_list)
+
+    print('\n{}Transaction Outputs:'.format(SPACES))
+    print(SPACES + '-' * 32)
+    print('{}{:32} output txn count: {}'.format(SPACES, txn_out_bytes.hex(), txn_out_count))
+    print_transaction_outputs(txn_out_list)
+
+    print('{}{:32} lock time: {}'.format(SPACES, lock_time.hex(), unmarshal_uint(lock_time)))
+    if txn[val + 4:]:
+        print('EXTRA: {}'.format(txn[val + 4:].hex()))
 
 
+@staticmethod
 def parse_coinbase(cb_bytes, version) -> tuple:
     """
-    Parses the bytes of a coinbase transaction
+    Helper method that parses the bytes of a coinbase transaction
     :param cb_bytes: coinbase transaction bytes
     :param version:  version number of the block
     :return:         list of the coinbase bytes, number of bytes in the script
@@ -461,16 +494,16 @@ def parse_coinbase(cb_bytes, version) -> tuple:
     hash_null = cb_bytes[:32]
     index = cb_bytes[32:36]
     script, script_count = unmarshal_compactsize(cb_bytes[36:])
-    data = 36 + len(script)
+    val = 36 + len(script)
 
     height = None
     # Version 1 doesn't require height param for block [227:836]
     if unmarshal_uint(version) > 1:
-        height = cb_bytes[data:data + 4]
-        data += 4
+        height = cb_bytes[val:val + 4]
+        val += 4
 
-    cb_script = cb_bytes[data:data + script_count]
-    sequence = cb_bytes[data + script_count: data + script_count + 4]
+    cb_script = cb_bytes[val:val + script_count]
+    sequence = cb_bytes[val + script_count: val + script_count + 4]
 
     if height:
         return [hash_null, index, script, height, cb_script, sequence], script_count
@@ -478,13 +511,99 @@ def parse_coinbase(cb_bytes, version) -> tuple:
         return [hash_null, index, script, cb_script, sequence], script_count
 
 
-def parse_tx_in(txn_in) -> tuple:
+@staticmethod
+def parse_transaction_in(txn_in) -> tuple:
     """
-    Parses the transaction input bytes from a transaction
+    Helper method to parse the transaction input bytes from a transaction
     :param txn_in: transaction input bytes
-    :return:        list of the transaction in bytes, number of bytes in the script
+    :return:       tuple -> list of the transaction in bytes, number of bytes in the script
     """
-    pass
+    value = txn_in[:32]
+    index = txn_in[32:36]
+    script, script_count = unmarshal_compactsize(txn_in[36:])
+    val = 36 + len(script)
+    sig_script = txn_in[val:val + script_count]
+    sequence = txn_in[val + script_count:]
+
+    return [value, index, script, sig_script, sequence], script_count
+
+
+@staticmethod
+def parse_txn_out(txn_out) -> tuple:
+    """
+    Helper method to parse the transaction output bytes of a transaction
+    :param txn_out: transaction output bytes
+    :return:        tuple -> list of the transaction out bytes, number of bytes in the script
+    """
+    value = txn_out[:8]
+    pk_script, pk_script_count = unmarshal_compactsize(txn_out[:8:])
+    val = 8 + len(pk_script)
+    pk = txn_out[val: val + pk_script_count]
+
+    return [value, pk_script, pk], pk_script_count
+
+
+@staticmethod
+def print_transaction_inputs(txn_in_list):
+    """
+    Helper method to print the transaction inputs from the transaction portion of the block
+    :param txn_in_list: list of input transactions
+    """
+    for i, txn_in in enumerate(txn_in_list, start=1):
+        print('\n{}Transaction {}{}:'.format(SPACES, i, ' (Coinbase)' if i == 1 else ''))
+        print(SPACES + '*' * 32)
+
+        value, index, script, sig_script, seq = txn_in[0]
+        script_count = txn_in[1]
+
+        print('{}{:32}\n{}{:32} hash\n{}-'.format(SPACES, value.hex()[:32], SPACES, value.hex()[32:], SPACES))
+        print('{}{:32} index: {}'.format(SPACES, index.hex(), unmarshal_uint(index)))
+        print('{}{:32} script bytes: {}'.format(SPACES, script.hex(), script_count))
+
+        if i == 1:
+            print('{}{:32} {}script'.format(SPACES, sig_script.hex(), 'coinbase '))
+        else:
+            print('{}{:32} script'.format(SPACES, sig_script.hex()))
+
+        print('{}{:32} sequence number'.format(SPACES, seq.hex()))
+
+
+@staticmethod
+def print_transaction_outputs(txn_out_list):
+    """
+    Helper method to print the transaction outputs from the transaction portion of the block
+    :param txn_out_list: list of output transactions
+    """
+    for i, txn_out in enumerate(txn_out_list, start=1):
+        print('\n{}Transaction {}:'.format(SPACES, i))
+        print(SPACES + '*' * 32)
+
+        value, pk_script, pk = txn_out[0]
+        pk_script_count = txn_out[1]
+
+        satoshis = unmarshal_uint(value)
+        btc = convert_to_sat(satoshis)
+
+        print('{}{:32} value: {} satoshis = {} BTC'.format(SPACES, value.hex(), satoshis, btc))
+        print('{}{:32} public key script length: {}\n{}-'.format(SPACES, pk_script.hex(), pk_script_count, SPACES))
+
+        for j in range(0, pk_script_count * 2, 32):
+            if j + 32 > pk_script_count * 2:
+                # we have the PK, so we want to print it
+                print('{}{:32}{}'.format(SPACES, pk.hex()[j:j + 32], ' public key script\n{}-'.format(SPACES)))
+            else:
+                # we don't have PK, so we don't print it
+                print('{}{:32}'.format(SPACES, pk.hex()[j:j + 32]))
+
+
+@staticmethod
+def convert_to_sat(btc) -> int:
+    """
+    Converts BTC to Satoshis currency
+    :param btc:  bitcoint value
+    :return:    satoshi value
+    """
+    return btc * 10e5
 
 
 @staticmethod

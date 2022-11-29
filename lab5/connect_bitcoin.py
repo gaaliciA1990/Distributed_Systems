@@ -5,7 +5,9 @@ The block is obtained with getters and the transaction is printed from the block
 Author: Alicia Garcia
 Date: 11/27/2022
 """
+import random
 import socket
+import sys
 import time
 
 from lab5 import bitcoin_interpreter as interpreter
@@ -19,20 +21,79 @@ EMPTY_STRING = ''.encode()  # empty payload
 COMMAND_SIZE = 12  # command msg length
 VERSION_NUM = 70015  # highest protocol version, int32_t
 BLOCK_NUM = 4112177 % 10000  # random block number
+BLOCK_GENESIS = bytes.fromhex('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
 
 
-def connect_to_btc():
+def connect_to_btc(block_number):
+    """
+    Creates a TCP/IP connection with BTC and handles messages sent/received messages
+    :param block_number: The block number to look for
+    """
     btc_address = (BTC_IP, PORT)
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as btc_sock:
         btc_sock.connect(btc_address)
 
         # send version msg, get peer version msg
-        version_msg = get_build_msg('version', version_message())
-        peer_version_msg = exchange_messages(btc_sock, version_msg, expected_bytes=126)[0]
+        peer_height = send_version_message(btc_sock)
+
+        # Send verack to receive sendHeaders, sendcmpt, ping, addr, feefilter
+        send_verack_message()
+
+        # Send ping to receive pong
+        send_ping_message()
+
+        if block_number > peer_height:
+            print('\nCould not retrieve block {}: max height is {}'.format(block_number, peer_height))
+            sys.exit(1)
+
+        block_hash = interpreter.swap_endian(BLOCK_GENESIS)
+        curr_height = 0
+        last_500_blocks = []  # to store last 500 blocks from inv messages
+
+        # Send getblock until inventory has desired block number
+        while curr_height < block_number:
+            last_500_blocks, curr_height = send_getblocks_message(block_hash, curr_height)
+            block_hash = last_500_blocks[-1]
+
+        # Retrieve block, send getdata for the block and receive block message
+        new_block_hash = last_500_blocks[(block_number - 1) % 500]
+        getdata = get_message('getdata', get_data_message(2, new_block_hash))
+        message_list = exchange_messages(getdata, height=block_number, wait=True)
+        new_block = b''.join(message_list)
 
 
-def get_build_msg(command, payload):
+def send_version_message(btc_sock: socket) -> int:
+    """
+    Sends version message and gets the peer height
+    :param btc_sock:    BTC socket with our connection
+    :return:            peer height
+    """
+    version_msg = get_message('version', version_message())
+    peer_version_msg = exchange_messages(btc_sock, version_msg, expected_bytes=126)[0]
+
+    return interpreter.unmarshal_uint(peer_version_msg[-5:-1])
+
+
+def send_verack_message():
+    """
+    Sends a verack message and calls exchange messages to receive sendHeaders, sendcmp, ping,
+    addr, and feefilter
+    """
+    verack_msg = get_message('verack', EMPTY_STRING)
+    exchange_messages(verack_msg, expected_bytes=202)
+
+
+def send_ping_message():
+    """
+    Sends a ping message and calls exchange message to receive pong
+    """
+    # get the ping payload per bitcoin protocol
+    ping_msg = get_message('ping', interpreter.uint64_t(random.getrandbits(64)))
+    exchange_messages(ping_msg, expected_bytes=32)
+
+
+def get_message(command: str, payload: bytes) -> bytes:
     """
     Get the full message in bytes (header + payload)
     :param command: type of command/message
@@ -60,7 +121,35 @@ def build_msg_header(command: str, payload: bytes) -> bytes:
     return b''.join([MAGIC_BYTES, command_name, payload_size, check_sum])
 
 
-def version_message():
+def get_data_message(txn_type, block_header) -> bytes:
+    """
+    Builds the getdata payload per the BTC protocol
+    :param txn_type:    transaction type
+    :param block_header: hash of the desired block
+    :return:             message in bytes
+    """
+    count = interpreter.compactsize_t(1)
+    entry_type = interpreter.uint32_t(txn_type)
+    entry_hash = bytes.fromhex(block_header.hex())
+
+    return count + entry_type + entry_hash
+
+
+def getblocks_msg(header_hash) -> bytes:
+    """
+    Builds the getblock payload, per the BTC protocol
+    :param header_hash:
+    :return:
+    """
+    version = interpreter.uint32_t(VERSION_NUM)
+    count = interpreter.compactsize_t(1)
+    block_header_hash = bytes.fromhex(header_hash.hex())  # Assumes we passed in computed sha256(sha256(block)) hash
+    max_hash = b'\0' * 32  # always ask for the max number of blocks
+
+    return b''.join([version, count, block_header_hash, max_hash])
+
+
+def version_message() -> bytes:
     """
     Build the version message payload per BTC protocol.
     Variables named after developer protocol
@@ -68,7 +157,7 @@ def version_message():
     """
     version = interpreter.int32_t(VERSION_NUM)  # version = 700015
     services = interpreter.uint64_t(0)  # Not a full node
-    timestamp = interpreter.int64_t(int(time.time())) # current unix epoch
+    timestamp = interpreter.int64_t(int(time.time()))  # current unix epoch
     addr_recv_services = interpreter.uint64_t(1)  # full node
     addr_recv_ip_address = interpreter.ipv6_from_ipv4(BTC_IP)
     addr_recv_port = interpreter.uint16_t(PORT)
@@ -86,10 +175,7 @@ def version_message():
                      nonce, user_agent_bytes, start_height, relay])
 
 
-
-
-
-def exchange_messages(btc_sock: socket, send_msg: bytes, expected_bytes=None, height=None, wait=False):
+def exchange_messages(btc_sock: socket, send_msg: bytes, expected_bytes=None, height=None, wait=False) -> list:
     """
     Exchanges messages with BTC node and prints the message that are being sent and received
     :param btc_sock:       BTC socket
@@ -120,7 +206,12 @@ def exchange_messages(btc_sock: socket, send_msg: bytes, expected_bytes=None, he
 
     finally:
         print('\nReceived {} bytes from BTC node {}'.format(len(recvd_bytes), address))
-        recvc_message_list = split_msg(recvd_bytes)
+        message_list = split_msg(recvd_bytes)  # Get the list of messages from of a member of the network
+
+        for message in message_list:
+            interpreter.print_message(message, 'receive', height)
+
+        return message_list
 
 
 def split_msg(peer_message: bytes) -> list:
@@ -134,3 +225,40 @@ def split_msg(peer_message: bytes) -> list:
     while peer_message:
         payload_size = interpreter.unmarshal_uint(peer_message[16:20])
         msg_size = interpreter.HDR_SZ + payload_size
+        message_list.append(peer_message[:msg_size])
+        peer_message = peer_message[msg_size:]  # move to the next section of data
+
+    return message_list
+
+
+@staticmethod
+def send_getblocks_message(input_hash, height) -> tuple:
+    """
+    Helper method for sending getblocks message to the BTC node.
+    :param input_hash: locator hash for getblocks message
+    :param height: current local blockchain height
+    :return: tuple -> list of last 500 block headers, updated height
+    """
+    getblocks = get_message('getblocks', getblocks_msg(input_hash))
+    peer_inv = exchange_messages(getblocks, expected_bytes=18027, height=height + 1)
+    peer_inv_bytes = b''.join(peer_inv)
+
+    for i in range(31, len(peer_inv_bytes), 36):
+        last_500_headers = [peer_inv_bytes[i: i + 32]]
+
+    height = height + (len(peer_inv[-1]) - 27) // 36
+
+    return last_500_headers, height
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print('Usage: connect_bitcoin.py [BLOCK NUMBER]: enter 0 to use default')
+        sys.exit(1)
+
+    if int(sys.argv[1]) != 0:
+        block_num = int(sys.argv[1])
+    else:
+        block_num = BLOCK_NUM
+
+    connect_to_btc(block_num)
