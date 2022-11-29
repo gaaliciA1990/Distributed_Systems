@@ -8,6 +8,7 @@ Date: 11/27/2022
 from time import strftime, gmtime
 
 HDR_SZ = 50
+SPACES = '  '
 
 
 def compactsize_t(n):
@@ -150,6 +151,18 @@ def checksum(payload: bytes):
     return hash(payload)[:4]
 
 
+def swap_endian(b: bytes):
+    """
+    Swap the endianness of the given bytes. If little, swaps to big. If big,
+    swaps to little.
+    :param b: bytes to swap
+    :return: swapped bytes
+    """
+    swapped = bytearray.fromhex(b.hex())
+    swapped.reverse()
+    return swapped
+
+
 def print_message(msg, text=None):
     """
     Report the contents of the given bitcoin message
@@ -160,16 +173,46 @@ def print_message(msg, text=None):
     print('({}) {}'.format(len(msg), msg[:60].hex() + ('' if len(msg) < 60 else '...')))
     payload = msg[HDR_SZ:]
     command = print_header(msg[:HDR_SZ], checksum(payload))
+
+    if payload:
+        if command == 'block':
+            header_hash = swap_endian(hash(payload[:80])).hex()
+        else:
+            header_hash = ''
+        print('{}{} {}'.format(SPACES, command.upper(), header_hash))
+        print(SPACES + '-' * 56)
+
     if command == 'version':
         print_version_msg(payload)
-    # FIXME print out the payloads of other types of messages, too
+    elif command == 'sendcmpct':
+        print_sendcmpct_message(payload)
+    elif command == 'ping' or command == 'pong':
+        print_ping_pong_message(payload)
+    elif command == 'addr':
+        print_addr_message(payload)
+    elif command == 'feefilter':
+        print_feefilter_message(payload)
+    elif command == 'getblocks':
+        print_getblocks_message(payload)
+    elif command == 'inv' or command == 'getdata' or command == 'notfound':
+        print_inv_message(payload, height)
+    elif command == 'block':
+        print_block_message(payload)
     return command
 
+
+def print_ping_pong_message(nonce):
+    """
+    Prints contnets of ping/pong message
+    :param nonce:  Payload that is always nonce
+    """
+    print('{}{:32} nonce: {}'.format(SPACES * 2, nonce.hex(), unmarshal_uint(nonce)))
+    
 
 def print_version_msg(b):
     """
     Report the contents of the given bitcoin version message (sans the header)
-    :param payload: version message contents
+    :param b: version message contents
     """
     # pull out fields
     version, my_services, epoch_time, your_services = b[:4], b[4:12], b[12:20], b[20:28]
@@ -204,6 +247,17 @@ def print_version_msg(b):
     print('{}{:32} relay {}'.format(prefix, relay.hex(), bytes(relay) != b'\0'))
     if len(extra) > 0:
         print('{}{:32} EXTRA!!'.format(prefix, extra.hex()))
+
+
+def print_sendcmpct_message(payload):
+    """
+    Prints contents of the sendcmpct message.
+    :param payload: sendcmpct message payload
+    """
+    announce, version = payload[:1], payload[1:]
+
+    print('{}{:32} announce: {}'.format(SPACES, announce.hex(), bytes(announce) != b'\0'))
+    print('{}{:32} version: {}'.format(SPACES, version.hex(), unmarshal_uint(version)))
 
 
 def print_header(header, expected_cksum=None):
