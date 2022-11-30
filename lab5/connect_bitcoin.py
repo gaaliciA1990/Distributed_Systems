@@ -28,7 +28,7 @@ EMPTY_STRING = ''.encode()  # empty payload
 COMMAND_SIZE = 12  # command msg length
 VERSION_NUM = 70015  # highest protocol version, int32_t
 BLOCK_NUM = 4112177 % 10000  # random block number
-BLOCK_HEX = bytes.fromhex('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
+GENESIS = bytes.fromhex('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
 
 
 def connect_to_btc(block_number: int):
@@ -52,7 +52,7 @@ def connect_to_btc(block_number: int):
             print('\nCould not retrieve block {}: max height is {}'.format(block_number, peer_height))
             sys.exit(1)
 
-        block_hash = interpreter.swap_endian(BLOCK_HEX)
+        block_hash = interpreter.swap_endian(GENESIS)
         curr_height = 0
         last_500_blocks = []  # to store last 500 blocks from inv messages
 
@@ -251,7 +251,10 @@ def send_getblocks_message(input_hash: bytes, height: int, btc_sock: socket) -> 
     for i in range(31, len(peer_inv_bytes), 36):
         last_500_headers = [peer_inv_bytes[i: i + 32]]
 
-    height = height + (len(peer_inv[-1]) - 27) // 36
+    try:
+        height = height + (len(peer_inv[-1]) - 27) // 36
+    except IndexError as ie:
+        print(ie)
 
     return last_500_headers, height
 
