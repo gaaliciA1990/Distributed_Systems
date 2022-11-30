@@ -12,7 +12,14 @@ import time
 
 from lab5 import bitcoin_interpreter as interpreter
 
-BTC_IP = '47.40.67.209'
+'''
+Test BTC IPs:
+90.66.55.207
+122.199.31.37
+74.220.255.190
+95.110.234.93
+'''
+BTC_IP = '95.110.234.93'
 HOST_IP = '127.0.0.1'
 PORT = 8333  # Mainnet
 BUFF_SZ = 64000  # buffer size for socket
@@ -21,10 +28,10 @@ EMPTY_STRING = ''.encode()  # empty payload
 COMMAND_SIZE = 12  # command msg length
 VERSION_NUM = 70015  # highest protocol version, int32_t
 BLOCK_NUM = 4112177 % 10000  # random block number
-BLOCK_GENESIS = bytes.fromhex('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
+BLOCK_HEX = bytes.fromhex('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
 
 
-def connect_to_btc(block_number):
+def connect_to_btc(block_number: int):
     """
     Creates a TCP/IP connection with BTC and handles messages sent/received messages
     :param block_number: The block number to look for
@@ -36,31 +43,23 @@ def connect_to_btc(block_number):
 
         # send version msg, get peer version msg
         peer_height = send_version_message(btc_sock)
-
         # Send verack to receive sendHeaders, sendcmpt, ping, addr, feefilter
-        send_verack_message()
-
+        send_verack_message(btc_sock)
         # Send ping to receive pong
-        send_ping_message()
+        send_ping_message(btc_sock)
 
         if block_number > peer_height:
             print('\nCould not retrieve block {}: max height is {}'.format(block_number, peer_height))
             sys.exit(1)
 
-        block_hash = interpreter.swap_endian(BLOCK_GENESIS)
+        block_hash = interpreter.swap_endian(BLOCK_HEX)
         curr_height = 0
         last_500_blocks = []  # to store last 500 blocks from inv messages
 
         # Send getblock until inventory has desired block number
         while curr_height < block_number:
-            last_500_blocks, curr_height = send_getblocks_message(block_hash, curr_height)
+            last_500_blocks, curr_height = send_getblocks_message(block_hash, curr_height, btc_sock)
             block_hash = last_500_blocks[-1]
-
-        # Retrieve block, send getdata for the block and receive block message
-        new_block_hash = last_500_blocks[(block_number - 1) % 500]
-        getdata = get_message('getdata', get_data_message(2, new_block_hash))
-        message_list = exchange_messages(getdata, height=block_number, wait=True)
-        new_block = b''.join(message_list)
 
 
 def send_version_message(btc_sock: socket) -> int:
@@ -70,27 +69,30 @@ def send_version_message(btc_sock: socket) -> int:
     :return:            peer height
     """
     version_msg = get_message('version', version_message())
-    peer_version_msg = exchange_messages(btc_sock, version_msg, expected_bytes=126)[0]
+    peer_version_msg = exchange_messages(version_msg, btc_sock, expected_bytes=126)[0]
 
     return interpreter.unmarshal_uint(peer_version_msg[-5:-1])
 
 
-def send_verack_message():
+def send_verack_message(btc_sock):
     """
     Sends a verack message and calls exchange messages to receive sendHeaders, sendcmp, ping,
     addr, and feefilter
+    :param btc_sock: socket for BTC
     """
     verack_msg = get_message('verack', EMPTY_STRING)
-    exchange_messages(verack_msg, expected_bytes=202)
+    exchange_messages(verack_msg, btc_sock, expected_bytes=202)
 
 
-def send_ping_message():
+def send_ping_message(btc_sock):
     """
     Sends a ping message and calls exchange message to receive pong
+        :param btc_sock: socket for BTC
+
     """
     # get the ping payload per bitcoin protocol
     ping_msg = get_message('ping', interpreter.uint64_t(random.getrandbits(64)))
-    exchange_messages(ping_msg, expected_bytes=32)
+    exchange_messages(ping_msg, btc_sock, expected_bytes=32)
 
 
 def get_message(command: str, payload: bytes) -> bytes:
@@ -175,7 +177,7 @@ def version_message() -> bytes:
                      nonce, user_agent_bytes, start_height, relay])
 
 
-def exchange_messages(btc_sock: socket, send_msg: bytes, expected_bytes=None, height=None, wait=False) -> list:
+def exchange_messages(send_msg: bytes, btc_sock: socket, expected_bytes=None, height=None, wait=False) -> list:
     """
     Exchanges messages with BTC node and prints the message that are being sent and received
     :param btc_sock:       BTC socket
@@ -185,11 +187,12 @@ def exchange_messages(btc_sock: socket, send_msg: bytes, expected_bytes=None, he
     :param wait:           Bool for whether to wait for a response
     :return:               list of message bytes
     """
-    timeout = 0.5
     interpreter.print_message(send_msg, 'send', height)
-    btc_sock.settimeout(timeout)
     recvd_bytes = b''
     address = (BTC_IP, PORT)
+
+    if btc_sock:
+        btc_sock.settimeout(0.5)
 
     try:
         btc_sock.send(send_msg)
@@ -201,6 +204,7 @@ def exchange_messages(btc_sock: socket, send_msg: bytes, expected_bytes=None, he
             # wait until timeout to receive all bytes
             while True:
                 recvd_bytes += btc_sock.recv(BUFF_SZ)
+
     except Exception as e:
         print('\nNo bytes left to receive from {}: {}'.format(address, str(e)))
 
@@ -232,7 +236,7 @@ def split_msg(peer_message: bytes) -> list:
 
 
 @staticmethod
-def send_getblocks_message(input_hash, height) -> tuple:
+def send_getblocks_message(input_hash: bytes, height: int, btc_sock: socket) -> tuple:
     """
     Helper method for sending getblocks message to the BTC node.
     :param input_hash: locator hash for getblocks message
@@ -240,8 +244,9 @@ def send_getblocks_message(input_hash, height) -> tuple:
     :return: tuple -> list of last 500 block headers, updated height
     """
     getblocks = get_message('getblocks', getblocks_msg(input_hash))
-    peer_inv = exchange_messages(getblocks, expected_bytes=18027, height=height + 1)
+    peer_inv = exchange_messages(getblocks, btc_sock, expected_bytes=18027, height=height + 1)
     peer_inv_bytes = b''.join(peer_inv)
+    last_500_headers = []
 
     for i in range(31, len(peer_inv_bytes), 36):
         last_500_headers = [peer_inv_bytes[i: i + 32]]
@@ -262,3 +267,6 @@ if __name__ == '__main__':
         block_num = BLOCK_NUM
 
     connect_to_btc(block_num)
+
+    print('\nAll {} blocks have been retrieved!'.format(block_num))
+    sys.exit(0)

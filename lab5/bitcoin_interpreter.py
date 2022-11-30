@@ -143,13 +143,13 @@ def unmarshal_uint(b: bytes) -> int:
     return int.from_bytes(b, byteorder='little', signed=False)
 
 
-def checksum(payload: bytes) -> int:
+def checksum(payload: bytes) -> bytes:
     """
     Calculate bitcoin protocol checksum using sha256.
     :param payload: payload bytes
     :return:    first 4 bytes of checksum
     """
-    return hash(payload)[:4]
+    return custom_hash(payload)[:4]
 
 
 def swap_endian(b: bytes) -> bytes:
@@ -203,8 +203,6 @@ def print_message(msg: bytes, text=None, height=None) -> str:
         print_block_message(payload)
     elif command == 'inv' or command == 'getdata' or command == 'notfound':
         print_inv_message(payload, height)
-    else:
-        print('Command [{}] not recognized! Terminating program'.format(command))
 
     return command
 
